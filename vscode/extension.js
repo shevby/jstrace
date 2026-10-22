@@ -115,7 +115,7 @@ class CallsProvider {
   getChildren(element) {
     if (!element) {
       const folders = projects();
-      if (folders.length === 1) return this.logsOf(folders[0], undefined);
+      if (folders.length === 1) return this.allLogs();
       return folders.map((folder) => this.projectItem(folder));
     }
     if (element.kind === 'project') return this.logsOf(element.folder, element);
@@ -249,6 +249,15 @@ class CallsProvider {
   }
 
   /**
+   * The logs of every project, newest first in each.
+   * @returns {LogItem[]}
+   */
+  allLogs() {
+    const folders = projects();
+    return folders.flatMap((folder) => this.logsOf(folder, folders.length === 1 ? undefined : this.projectItem(folder)));
+  }
+
+  /**
    * The logs of a project, newest first.
    * @param {vscode.WorkspaceFolder} folder
    * @param {ProjectItem | undefined} project its item, when projects are shown
@@ -336,6 +345,134 @@ class CallsProvider {
 }
 
 /**
+ * A log with calls matching the search, in the Search view.
+ * @typedef {object} ResultsItem
+ * @property {'results'} kind
+ * @property {LogItem} log
+ * @property {TraceNode[]} nodes what matched
+ */
+
+/**
+ * The calls past {@link MAX_RESULTS} in a log, not listed.
+ * @typedef {object} MoreItem
+ * @property {'more'} kind
+ * @property {LogItem} log
+ * @property {number} count
+ */
+
+/** @typedef {ResultsItem | MoreItem | NodeItem} SearchItem */
+
+/** How many matches of a log the Search view lists. */
+const MAX_RESULTS = 1000;
+
+/**
+ * The Search view's data (4.3): the logs with calls (or loads) matching the search → those
+ * calls, in the order they ran. A call is the Calls view's own item, so it can be revealed
+ * there. Searched again whenever it's listed, so it follows the logs as they grow.
+ * @implements {vscode.TreeDataProvider<SearchItem>}
+ */
+class SearchProvider {
+  /** @param {CallsProvider} calls */
+  constructor(calls) {
+    this.calls = calls;
+    /** @type {string} what to look for: words that must all be found, ignoring case */
+    this.query = '';
+    /** @type {vscode.TreeView<SearchItem> | undefined} where it says how many matched */
+    this.view = undefined;
+    /** @type {vscode.EventEmitter<SearchItem | undefined>} */
+    this.changed = new vscode.EventEmitter();
+    /** @type {vscode.Event<SearchItem | undefined>} */
+    this.onDidChangeTreeData = this.changed.event;
+  }
+
+  /**
+   * Searches again.
+   * @returns {void}
+   */
+  refresh() {
+    this.changed.fire(undefined);
+  }
+
+  /**
+   * @param {SearchItem} [element]
+   * @returns {SearchItem[]}
+   */
+  getChildren(element) {
+    if (!element) {
+      /** @type {ResultsItem[]} */
+      const items = [];
+      let count = 0;
+      for (const log of this.query ? this.calls.allLogs() : []) {
+        const nodes = logs.search(log.trace, this.query, log.root);
+        count += nodes.length;
+        if (nodes.length > 0) items.push({ kind: 'results', log, nodes });
+      }
+      if (this.view) {
+        this.view.message = !this.query ? undefined : count === 0 ? `No calls match “${this.query}”.` : `${count} ${count === 1 ? 'match' : 'matches'} for “${this.query}”`;
+      }
+      return items;
+    }
+    if (element.kind !== 'results') return [];
+    const { log, nodes } = element;
+    /** @type {SearchItem[]} */
+    const items = nodes.slice(0, MAX_RESULTS).map((node) => this.calls.nodeItem(log, node));
+    if (nodes.length > MAX_RESULTS) items.push({ kind: 'more', log, count: nodes.length - MAX_RESULTS });
+    return items;
+  }
+
+  /**
+   * @param {SearchItem} element
+   * @returns {vscode.TreeItem}
+   */
+  getTreeItem(element) {
+    const { Expanded, None } = vscode.TreeItemCollapsibleState;
+    if (element.kind === 'results') {
+      const { log, nodes } = element;
+      const item = new vscode.TreeItem(logs.logLabel(log.trace, log.file, log.root), Expanded);
+      item.id = `results:${log.file}`;
+      item.description = `${nodes.length}  ${logs.logDescription(log.trace)}${log.running ? '  running' : ''}`;
+      item.iconPath = new vscode.ThemeIcon(log.running ? 'sync~spin' : 'pulse');
+      item.tooltip = log.file;
+      return item;
+    }
+    if (element.kind === 'more') {
+      const item = new vscode.TreeItem(`… ${element.count} more`, None);
+      item.id = `more:${element.log.file}`;
+      return item;
+    }
+    const { node, log } = element;
+    const event = node.event;
+    const tree = this.calls.getTreeItem(element);
+    const label = logs.nodeLabel(node, log.root);
+    const item = new vscode.TreeItem({ label, highlights: logs.highlights(label, this.query) }, None);
+    item.id = `result:${log.file}#${event.id}`;
+    const where = `${logs.relativePath(log.root, event.file)}${event.type === 'load' ? '' : `:${event.line}`}`;
+    item.description = `${tree.description ? `${tree.description}  ` : ''}${where}`;
+    item.iconPath = tree.iconPath;
+    item.contextValue = tree.contextValue;
+    item.command = { title: 'Go to code (double-click: show in the Calls view)', command: 'jstrace.openResult', arguments: [element] };
+    return item;
+  }
+
+  /**
+   * Fills in a call's hover: the Calls view's, plus the calls it ran in.
+   * @param {vscode.TreeItem} item
+   * @param {SearchItem} element
+   * @returns {vscode.TreeItem}
+   */
+  resolveTreeItem(item, element) {
+    if (element.kind !== 'node') return item;
+    const { node, log } = element;
+    const within = node.parent ? `In ${logs.stackOf(node.parent, log.root)}\n\n` : '';
+    item.tooltip = new vscode.MarkdownString(`${within}${logs.nodeTooltip(node, log.root)}\n\nDouble-click to show it in the Calls view`);
+    return item;
+  }
+}
+
+/** How soon a second click on a search result makes a double-click, in ms. */
+const DOUBLE_CLICK = 500;
+
+/**
  * Called by VSCode when the extension activates.
  * @param {vscode.ExtensionContext} context
  * @returns {void}
@@ -343,6 +480,11 @@ class CallsProvider {
 function activate(context) {
   const provider = new CallsProvider();
   const view = vscode.window.createTreeView('jstrace.calls', { treeDataProvider: provider, showCollapseAll: true });
+  const search = new SearchProvider(provider);
+  const searchView = vscode.window.createTreeView('jstrace.searchResults', { treeDataProvider: search });
+  search.view = searchView;
+  /** @type {{ element: SearchItem | undefined, time: number, opening: Promise<unknown> }} the last click on a result */
+  const click = { element: undefined, time: 0, opening: Promise.resolve() };
   const output = vscode.window.createOutputChannel('jstrace');
   /** @type {Map<string, string>} the details tabs' contents, by URI */
   const details = new Map();
@@ -355,6 +497,9 @@ function activate(context) {
     clearTimeout(pending);
     pending = setTimeout(() => provider.refresh(), 300);
   };
+  provider.onDidChangeTreeData(() => {
+    if (search.query) search.refresh();
+  });
   const ticker = setInterval(() => provider.tick(), 1000);
   ticker.unref(); // not to keep a process alive (tests)
   const watcher = vscode.workspace.createFileSystemWatcher('**/.jstrace/logs/*.jsonl', false, true, false);
@@ -391,6 +536,7 @@ function activate(context) {
 
   context.subscriptions.push(
     view,
+    searchView,
     output,
     watcher,
     { dispose: () => clearTimeout(pending) },
@@ -554,6 +700,57 @@ function activate(context) {
             queue.push(...children);
           }
         });
+      },
+    ),
+
+    vscode.commands.registerCommand('jstrace.search', async () => {
+      const query = await vscode.window.showInputBox({
+        title: 'Search Calls',
+        value: search.query,
+        prompt: 'Words to find in calls: function names, files, arguments, values. All must match; case is ignored.',
+        placeHolder: 'fetchPrice 42',
+      });
+      if (query === undefined) return; // cancelled
+      search.query = query.trim();
+      search.refresh();
+      await vscode.commands.executeCommand('jstrace.searchResults.focus');
+    }),
+
+    vscode.commands.registerCommand('jstrace.clearSearch', () => {
+      search.query = '';
+      search.refresh();
+    }),
+
+    vscode.commands.registerCommand(
+      'jstrace.showInTree',
+      /**
+       * Selects a search result in the Calls view, expanding what it ran in.
+       * @param {SearchItem} [element] the selected result, from the command palette
+       */
+      async (element = searchView.selection[0]) => {
+        if (element?.kind === 'node') await view.reveal(element, { select: true, focus: true });
+      },
+    ),
+
+    vscode.commands.registerCommand(
+      'jstrace.openResult',
+      /**
+       * A click on a search result does what it does in the Calls view (goes to the code);
+       * a double-click (a second click on it soon after) shows it in the Calls view. A tree
+       * item's command runs on every click, so a double-click is told by the time between.
+       * @param {NodeItem} element
+       */
+      async (element) => {
+        const now = Date.now();
+        const double = click.element === element && now - click.time < DOUBLE_CLICK;
+        Object.assign(click, { element, time: now });
+        if (double) {
+          await click.opening; // so the editor it opens doesn't take the focus back
+          return void (await vscode.commands.executeCommand('jstrace.showInTree', element));
+        }
+        const command = provider.getTreeItem(element).command;
+        click.opening = command ? Promise.resolve(vscode.commands.executeCommand(command.command, ...(command.arguments ?? []))) : Promise.resolve();
+        await click.opening;
       },
     ),
 

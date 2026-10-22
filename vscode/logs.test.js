@@ -178,6 +178,20 @@ test('a call site finds the callee by the name it is written with', () => {
   assert.equal(logs.columnOf('    items.map(callback);', ''), 4);
 });
 
+test('search finds the calls and loads with every word, in names, arguments, values and files', () => {
+  const trace = logs.parseLog(LOG);
+  const ids = (/** @type {string} */ query) => logs.search(trace, query, ROOT).map((node) => node.event.id);
+  assert.deepEqual(ids('DIVIDE'), [3], 'case is ignored');
+  assert.deepEqual(ids('divide b: 0'), [3], 'every word, in any order');
+  assert.deepEqual(ids('divide zero'), [3], 'what it threw');
+  assert.deepEqual(ids('"X"'), [4], 'what it returned, even in a resume; the resume itself is left out');
+  assert.deepEqual(ids('app.js:12'), [4], 'where it is');
+  assert.deepEqual(ids('src/app'), [1, 2, 3, 4, 6], 'loads too, in the order they ran');
+  assert.deepEqual(ids('divide later'), []);
+  assert.deepEqual(ids('  '), [], 'nothing to look for');
+  assert.deepEqual(logs.highlights('divide(a: 1, b: 0)', 'b: DIV'), [[0, 3], [13, 15]]);
+});
+
 test('readMore reads a log as it grows, a line at a time', (t) => {
   const dir = copyFixture(t, 'app');
   const log = path.join(dir, 'x.jsonl');

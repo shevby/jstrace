@@ -31,6 +31,11 @@
         {
           "id": "jstrace.calls",
           "name": "Calls"
+        },
+        {
+          "id": "jstrace.searchResults",
+          "name": "Search",
+          "visibility": "collapsed"
         }
       ]
     },
@@ -38,6 +43,10 @@
       {
         "view": "jstrace.calls",
         "contents": "No jstrace logs yet.\nRight-click a folder or file in the Explorer and choose \"Inject jstrace\", then run your program. Its calls show up here.\n[Refresh](command:jstrace.refresh)"
+      },
+      {
+        "view": "jstrace.searchResults",
+        "contents": "Find calls in the logs by function name, file, arguments or value. Double-click a result to show it in the Calls view.\n[Search Calls](command:jstrace.search)"
       }
     ],
     "commands": [
@@ -95,6 +104,24 @@
         "icon": "$(symbol-function)"
       },
       {
+        "command": "jstrace.search",
+        "title": "Search Calls",
+        "category": "jstrace",
+        "icon": "$(search)"
+      },
+      {
+        "command": "jstrace.clearSearch",
+        "title": "Clear Search",
+        "category": "jstrace",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "jstrace.showInTree",
+        "title": "Show in Calls View",
+        "category": "jstrace",
+        "icon": "$(list-tree)"
+      },
+      {
         "command": "jstrace.open",
         "title": "Go to Code",
         "category": "jstrace"
@@ -103,10 +130,20 @@
         "command": "jstrace.showCall",
         "title": "Show the Call",
         "category": "jstrace"
+      },
+      {
+        "command": "jstrace.openResult",
+        "title": "Open Search Result",
+        "category": "jstrace"
       }
     ],
     "menus": {
       "view/title": [
+        {
+          "command": "jstrace.search",
+          "when": "view == jstrace.calls",
+          "group": "navigation@0"
+        },
         {
           "command": "jstrace.refresh",
           "when": "view == jstrace.calls",
@@ -121,9 +158,29 @@
           "command": "jstrace.restore",
           "when": "view == jstrace.calls",
           "group": "navigation@3"
+        },
+        {
+          "command": "jstrace.search",
+          "when": "view == jstrace.searchResults",
+          "group": "navigation@1"
+        },
+        {
+          "command": "jstrace.clearSearch",
+          "when": "view == jstrace.searchResults",
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [
+        {
+          "command": "jstrace.showInTree",
+          "when": "view == jstrace.searchResults && viewItem =~ /^(call|callSite|load)$/",
+          "group": "inline"
+        },
+        {
+          "command": "jstrace.showInTree",
+          "when": "view == jstrace.searchResults && viewItem =~ /^(call|callSite|load)$/",
+          "group": "0_go@0"
+        },
         {
           "command": "jstrace.openText",
           "when": "view == jstrace.calls && viewItem == log",
@@ -131,27 +188,27 @@
         },
         {
           "command": "jstrace.showDetails",
-          "when": "view == jstrace.calls && viewItem =~ /^(call|callSite|resume|load|group)$/",
+          "when": "view =~ /^jstrace[.](calls|searchResults)$/ && viewItem =~ /^(call|callSite|resume|load|group)$/",
           "group": "inline"
         },
         {
           "command": "jstrace.goToFunction",
-          "when": "view == jstrace.calls && viewItem =~ /^(call|callSite)$/",
+          "when": "view =~ /^jstrace[.](calls|searchResults)$/ && viewItem =~ /^(call|callSite)$/",
           "group": "inline"
         },
         {
           "command": "jstrace.goToSite",
-          "when": "view == jstrace.calls && viewItem == callSite",
+          "when": "view =~ /^jstrace[.](calls|searchResults)$/ && viewItem == callSite",
           "group": "0_go@1"
         },
         {
           "command": "jstrace.goToFunction",
-          "when": "view == jstrace.calls && viewItem =~ /^(call|callSite|resume|group)$/",
+          "when": "view =~ /^jstrace[.](calls|searchResults)$/ && viewItem =~ /^(call|callSite|resume|group)$/",
           "group": "0_go@2"
         },
         {
           "command": "jstrace.showDetails",
-          "when": "view == jstrace.calls && viewItem =~ /^(call|callSite|resume|load|group)$/",
+          "when": "view =~ /^jstrace[.](calls|searchResults)$/ && viewItem =~ /^(call|callSite|resume|load|group)$/",
           "group": "1_details@1"
         },
         {
@@ -183,6 +240,10 @@
         },
         {
           "command": "jstrace.showCall",
+          "when": "false"
+        },
+        {
+          "command": "jstrace.openResult",
           "when": "false"
         }
       ]

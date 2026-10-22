@@ -18,8 +18,10 @@ function fakeVscode(dir) {
   const commands = {};
   /** @type {string[]} */
   const messages = [];
-  /** @type {any} */
-  let provider;
+  /** @type {Record<string, any>} the tree views, by id */
+  const views = {};
+  /** @type {(string | undefined)[]} what the input boxes will be answered */
+  const inputs = [];
   /** @type {any[]} */
   const revealed = [];
   /** @type {any[]} */
@@ -35,13 +37,17 @@ function fakeVscode(dir) {
   const vscode = {
     EventEmitter: class {
       constructor() {
-        this.event = () => ({ dispose() {} });
+        /** @type {((value: unknown) => void)[]} */
+        const listeners = [];
+        this.listeners = listeners;
+        this.event = (/** @type {(value: unknown) => void} */ listener) => (listeners.push(listener), { dispose() {} });
         /** @type {unknown[]} */
         this.fired = [];
       }
       /** @param {unknown} value */
       fire(value) {
         this.fired.push(value);
+        for (const listener of this.listeners) listener(value);
       }
     },
     TreeItem: class {
@@ -83,10 +89,9 @@ function fakeVscode(dir) {
     ViewColumn: { Beside: -2 },
     languages: { setTextDocumentLanguage: async (/** @type {any} */ document, /** @type {string} */ language) => ({ ...document, language }) },
     window: {
-      createTreeView: (/** @type {string} */ id, /** @type {any} */ options) => {
-        provider = options.treeDataProvider;
-        return { reveal: async (/** @type {any} */ item) => void revealed.push(item), selection: [], dispose() {} };
-      },
+      createTreeView: (/** @type {string} */ id, /** @type {any} */ options) =>
+        (views[id] = { provider: options.treeDataProvider, reveal: async (/** @type {any} */ item) => void revealed.push(item), selection: [], dispose() {} }),
+      showInputBox: async () => inputs.shift(),
       withProgress: (/** @type {any} */ options, /** @type {() => Promise<void>} */ task) => task(),
       createOutputChannel: () => ({ append() {}, appendLine() {}, show() {}, dispose() {} }),
       showInformationMessage: message('info'),
@@ -123,10 +128,10 @@ function fakeVscode(dir) {
         commands[name] = handler;
         return { dispose() {} };
       },
-      executeCommand: (/** @type {string} */ name, /** @type {any[]} */ ...args) => commands[name](...args),
+      executeCommand: (/** @type {string} */ name, /** @type {any[]} */ ...args) => commands[name]?.(...args), // and the views' own
     },
   };
-  return { vscode, commands, messages, revealed, opened, provider: () => provider };
+  return { vscode, commands, messages, revealed, opened, inputs, views, provider: () => views['jstrace.calls'].provider };
 }
 
 /**
@@ -256,4 +261,56 @@ test('the tree follows a log as it is written, keeping its items', (t) => {
   assert.deepEqual(provider.getChildren(main).map((/** @type {any} */ child) => provider.getTreeItem(child).label), ['greet()']);
   provider.tick();
   assert.equal(provider.changed.fired.length, 1, 'nothing new, nothing refreshed');
+});
+
+test('the Search view finds calls in every log; a double-click shows one in the Calls view', async (t) => {
+  const dir = copyFixture(t, 'app');
+  const folder = path.join(dir, '.jstrace', 'logs');
+  fs.mkdirSync(folder, { recursive: true });
+  const fake = activate(dir);
+  const provider = fake.provider();
+  const view = fake.views['jstrace.searchResults'];
+  const search = view.provider;
+  const index = path.join(dir, 'index.js');
+  const adds = [1, 2, 3, 4, 5, 6].flatMap((n) => [
+    { type: 'call', id: n + 1, parent: 1, depth: 1, name: 'add', file: index, line: 6, column: 0, args: { n }, site: { file: index, line: 26 }, time: n },
+    { type: 'return', call: n + 1, parent: n + 1, value: n * 2, time: n },
+  ]);
+  fs.writeFileSync(path.join(folder, '2026-01-01T00-00-00.000Z-1.jsonl'), [
+    { type: 'start', pid: 1, argv: ['node', index], cwd: dir, started: '2026-01-01T00:00:00.000Z', time: 0 },
+    { type: 'call', id: 1, parent: null, depth: 0, name: 'main', file: index, line: 23, column: 0, args: {}, time: 0 },
+    ...adds,
+    { type: 'return', call: 1, parent: 1, time: 7 },
+  ].map((event) => `${JSON.stringify(event)}\n`).join(''));
+
+  assert.deepEqual(search.getChildren(), [], 'nothing searched yet');
+  fake.inputs.push('ADD 3');
+  await fake.commands['jstrace.search']();
+  const [results] = search.getChildren();
+  assert.equal(view.message, '1 match for “ADD 3”');
+  const resultsItem = search.getTreeItem(results);
+  assert.equal(resultsItem.label, 'index.js');
+  assert.match(resultsItem.description, /^1 {2}2026-01-01 .* {2}pid 1$/, 'how many matched in the log');
+  const [add] = search.getChildren(results);
+  const item = search.getTreeItem(add);
+  assert.deepEqual([item.label, item.description, item.contextValue], [{ label: 'add(n: 3)', highlights: [[0, 3], [7, 8]] }, '← 6  index.js:6', 'callSite']);
+  assert.match(search.resolveTreeItem(item, add).tooltip.value, /^In main\(\) #1\n/);
+
+  const [other] = search.getChildren(search.getChildren()[0]);
+  await fake.commands[item.command.command](...item.command.arguments);
+  assert.equal(fake.opened.pop().options.selection.start.line, 25, 'a click goes to where it was called, as in the Calls view');
+  assert.deepEqual(fake.revealed, []);
+  await fake.commands[item.command.command](...item.command.arguments);
+  assert.deepEqual(fake.revealed, [add], 'a double-click shows it in the Calls view');
+  assert.equal(fake.opened.length, 0);
+  assert.equal(other, add, 'the very item the Calls view has');
+  const group = provider.getParent(add);
+  assert.equal(provider.getTreeItem(group).label, 'add() ×6', 'which it can reach through its group');
+
+  fake.inputs.push('nothing like it');
+  await fake.commands['jstrace.search']();
+  assert.deepEqual(search.getChildren(), []);
+  assert.equal(view.message, 'No calls match “nothing like it”.');
+  await fake.commands['jstrace.clearSearch']();
+  assert.deepEqual([search.getChildren(), view.message], [[], undefined]);
 });

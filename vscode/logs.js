@@ -448,6 +448,69 @@ function rowTooltip(row, root) {
 }
 
 /**
+ * The words of a search, lowercased.
+ * @param {string} query
+ * @returns {string[]}
+ */
+function searchWords(query) {
+  return query.toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+/**
+ * What a search looks in for a node: its name with all its arguments (not cut, unlike its
+ * label), how it ended, and where it is (`file:line`); a load's file.
+ * @param {TraceNode} node
+ * @param {string} root the project folder
+ * @returns {string}
+ */
+function searchText(node, root) {
+  const event = node.event;
+  if (event.type === 'load') return `load ${relativePath(root, event.file)}`;
+  const args = Object.entries(event.args ?? {})
+    .map(([name, value]) => `${name}: ${formatValue(value)}`)
+    .join(', ');
+  return `${event.name}(${args})  ${nodeDescription(node)}  ${relativePath(root, event.file)}:${event.line}`;
+}
+
+/**
+ * The calls and loads of a log that match a search (4.3): every word of the query is in
+ * their `searchText`, ignoring case. Resumes are left out, being parts of their calls.
+ * @param {Trace} trace
+ * @param {string} query
+ * @param {string} root the project folder
+ * @returns {TraceNode[]} in the order they ran
+ */
+function search(trace, query, root) {
+  const words = searchWords(query);
+  if (words.length === 0) return [];
+  /** @type {TraceNode[]} */
+  const found = [];
+  for (const node of trace.nodes.values()) {
+    if (node.event.type === 'resume') continue;
+    const text = searchText(node, root).toLowerCase();
+    if (words.every((word) => text.includes(word))) found.push(node);
+  }
+  return found;
+}
+
+/**
+ * Where the words of a search first are in a label, to highlight them.
+ * @param {string} label
+ * @param {string} query
+ * @returns {[number, number][]} start and end offsets, in order
+ */
+function highlights(label, query) {
+  const lower = label.toLowerCase();
+  /** @type {[number, number][]} */
+  const ranges = [];
+  for (const word of searchWords(query)) {
+    const at = lower.indexOf(word);
+    if (at >= 0) ranges.push([at, at + word.length]);
+  }
+  return ranges.sort((a, b) => a[0] - b[0]);
+}
+
+/**
  * The name a call of a function is written with, to find it on its call site's line:
  * `factorial` for `factorial`, `add` for `Cart->add` or `cart.add`, the class for a
  * constructor, `total` for `Cart->get total`. Empty when there's no name to look for (an
@@ -593,6 +656,9 @@ module.exports = {
   isRunning,
   callName,
   columnOf,
+  search,
+  highlights,
+  stackOf,
   nodeDetails,
   groupDetails,
   rows,
