@@ -41,6 +41,8 @@ test('mistakes fail with a message naming the field', (t) => {
     ['{ "include": "**/*.js" }', /"include" must be an array/],
     ['{ "maxDepth": -1 }', /"maxDepth" must be a whole number/],
     ['{ "maxRepeat": 1.5 }', /"maxRepeat" must be a whole number/],
+    ['{ "externalCalls": "yes" }', /"externalCalls" must be true or false/],
+    ['{ "ignoreCalls": [1] }', /"ignoreCalls" must be an array of name patterns/],
     ['{ "maxLines": 10 }', /unknown field "maxLines"/],
   ];
   for (const [text, message] of cases) {

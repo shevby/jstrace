@@ -16,10 +16,11 @@ after(() => fs.rmSync(LOGS, { recursive: true, force: true }));
 /**
  * Instruments a source with the runtime, logging to a temp folder.
  * @param {string} source
+ * @param {{ ignore: string[] }} [externalCalls]
  * @returns {string}
  */
-function instrument(source) {
-  return instrumentSource(source, { file: '/x.js', options: { logs: LOGS } }).code;
+function instrument(source, externalCalls) {
+  return instrumentSource(source, { file: '/x.js', options: { logs: LOGS }, externalCalls }).code;
 }
 
 /**
@@ -37,10 +38,11 @@ async function evaluate(source) {
 /**
  * Asserts that instrumenting a source changes neither what it does nor its lines.
  * @param {string} source
+ * @param {{ ignore: string[] }} [externalCalls]
  * @returns {Promise<string>} the instrumented code
  */
-async function same(source) {
-  const code = instrument(source);
+async function same(source, externalCalls) {
+  const code = instrument(source, externalCalls);
   assert.equal(code.split(/\r\n?|\n/).length, source.split(/\r\n?|\n/).length);
   assert.deepEqual(await evaluate(code), await evaluate(source));
   return code;
@@ -98,6 +100,64 @@ function* gen(n) { const got = yield n; yield; yield* [got, 'x']; return 'done';
 const it = gen(1);
 const steps = [it.next(), it.next('back'), it.next(), it.next(), it.next(), it.next()];
 module.exports = (async () => [await two(), await recovers(), steps])();`);
+});
+
+test('with externalCalls, every form of call keeps working, evaluated once and in order', async () => {
+  const code = await same(`'use strict';
+const order = [];
+const log = (x, label) => (order.push(label), x);
+class A {
+  #p() { return 'p' + this.x; }
+  constructor(x) { this.x = x; }
+  m(y) { return this.x + y; }
+  p() { return this.#p(); }
+  static make() { return new this(1); }
+}
+class B extends A { constructor() { super(2); } m(y) { return super.m(y) * 10; } }
+const a = new A(3);
+const o = { a, get g() { order.push('g'); return a; } };
+const key = 'm';
+let missing = null;
+function tag(parts) { return parts.join('|'); }
+const results = [
+  a.m(1), a[key](2), log(o, 'o').g.m(3), (a.m)(4), (0, String)(8), new B().m(1), a.p(),
+  [3, 1, 2].map((x) => x * 2).filter(Boolean).sort().join(','),
+  Promise.resolve(1)
+    .then((x) => x + 1)
+    ['constructor'].name,
+  o.a?.m(5), missing?.m(6), o.nope?.(), eval('1 + 1'), (function () { return this; })(), (() => 'arrow')(),
+  tag\`a\${1}b\`, Math.max(...[1, 5, 2]), JSON.parse(JSON.stringify({ deep: [1] })), String(7), 'abc'.toUpperCase(),
+];
+const errors = [() => missing.m(), () => missing(), () => a.nope()].map((f) => { try { f(); } catch (e) { return e.constructor.name; } });
+module.exports = [results, order, errors];`, { ignore: [] });
+  assert.match(code, /__jtm\.cm\(\d+,a\)\.m\(1\)/);
+  assert.match(code, /__jtm\.cf\(\d+,log\)\(o, 'o'\)/);
+  assert.match(code, /\(a\.m\)\(4\)/, 'left alone, as it keeps this');
+  assert.match(code, /eval\('1 \+ 1'\)/, 'left alone, as a direct eval');
+  assert.match(code, /o\.a\?\.m\(5\)/, 'left alone, as an optional chain');
+  assert.match(code, /super\.m\(y\)/);
+  assert.match(code, /this\.#p\(\)/);
+});
+
+test('with externalCalls, calls are named as written, where the callee is, and ignored by pattern', () => {
+  const source = `const fs = require('fs');
+fs.readFileSync('x');
+console.log(1);
+list.items.push(2);
+fetch(url)
+  .then(cb);
+list[0](); list[i](); (a || b)(); [1].map(f);`;
+  const { calls } = instrumentSource(source, { file: '/x.js', externalCalls: { ignore: ['require', 'console.*', '*.push'] } });
+  assert.deepEqual(calls, [
+    ['fs.readFileSync', 2, 3, []],
+    ['fetch().then', 6, 3, []],
+    ['fetch', 5, 0, []],
+    ['list[0]', 7, 5, []],
+    ['list[…]', 7, 16, []],
+    ['(…)', 7, 22, []],
+    ['….map', 7, 38, []],
+  ]);
+  assert.deepEqual(instrumentSource(source, { file: '/x.js' }).calls, []);
 });
 
 test('a shebang, directives, a module return and line endings stay as they are', async () => {
@@ -183,6 +243,8 @@ function createRecorder(require, options) {
             r: (value) => (write(['r', name]), value),
           };
         },
+        cf: (index, fn) => fn,
+        cm: (index, object) => object,
       };
     },
   };

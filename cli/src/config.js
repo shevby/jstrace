@@ -16,6 +16,8 @@ const fs = require('node:fs');
  * @property {number} maxLine how many characters an event's serialized values may take
  * @property {boolean} callSites whether calls log the line they were made from
  * @property {number} maxRepeat how many calls of a function a call (or the top level) logs before only counting the rest; 0 for no limit
+ * @property {boolean} externalCalls whether calls of functions that aren't traced (built-ins, files not instrumented) are logged too (4.13)
+ * @property {string[]} ignoreCalls with `externalCalls`, the callees not to log, as written (`console.*`, `*.push`; `*` for anything)
  */
 
 /** @type {Readonly<Config>} */
@@ -27,6 +29,12 @@ const DEFAULTS = Object.freeze({
   maxLine: 2000,
   maxRepeat: 20,
   callSites: true,
+  externalCalls: false,
+  ignoreCalls: [
+    'require', 'console.*', 'Math.*', 'Object.*', 'Number.*', 'Array.isArray', 'String', 'Number', 'Boolean', 'Symbol',
+    'parseInt', 'parseFloat', 'isNaN', '*.push', '*.pop', '*.shift', '*.unshift', '*.call', '*.apply', '*.bind',
+    '*.hasOwnProperty', '*.toString',
+  ],
 });
 
 /** A mistake in the config file, with a message for the user. */
@@ -75,9 +83,9 @@ function validate(data, file) {
   /** @type {Config} */
   const config = { ...DEFAULTS };
   for (const [key, value] of Object.entries(fields)) {
-    if (key === 'include' || key === 'exclude') {
+    if (key === 'include' || key === 'exclude' || key === 'ignoreCalls') {
       if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) {
-        throw new ConfigError(`${file}: "${key}" must be an array of glob strings`);
+        throw new ConfigError(`${file}: "${key}" must be an array of ${key === 'ignoreCalls' ? 'name patterns' : 'glob strings'}`);
       }
       config[key] = value;
     } else if (key === 'maxDepth' || key === 'maxString' || key === 'maxLine' || key === 'maxRepeat') {
@@ -85,7 +93,7 @@ function validate(data, file) {
         throw new ConfigError(`${file}: "${key}" must be a whole number, 0 or more`);
       }
       config[key] = value;
-    } else if (key === 'callSites') {
+    } else if (key === 'callSites' || key === 'externalCalls') {
       if (typeof value !== 'boolean') throw new ConfigError(`${file}: "${key}" must be true or false`);
       config[key] = value;
     } else {

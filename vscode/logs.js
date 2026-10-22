@@ -12,6 +12,9 @@ const path = require('node:path');
 /** How long a call's label may get before its arguments are cut. */
 const MAX_LABEL = 120;
 
+/** What an external call (4.13) is, for its hover and details; it's logged where it was made. */
+const NOT_TRACED = "Not traced (a built-in, or in a file that isn't instrumented): called here";
+
 /**
  * One node of a call tree: a file loading, a call, or an async function or generator going
  * on after a suspension.
@@ -320,11 +323,22 @@ function nodeLabel(node, root) {
   const event = node.event;
   if (event.type === 'load') return `load ${relativePath(root, event.file)}`;
   if (event.type === 'resume') return `↻ ${event.name}() resumed`;
-  const args = Object.entries(event.args ?? {})
+  const label = `${event.name}(${argsText(event)})`;
+  return label.length > MAX_LABEL ? `${label.slice(0, MAX_LABEL - 2)}…)` : label;
+}
+
+/**
+ * A call's arguments as its label shows them: `param: value, …`, or just the values for an
+ * external call (4.13), logged by position.
+ * @param {Record<string, any>} event a `call`
+ * @returns {string}
+ */
+function argsText(event) {
+  const args = event.args ?? {};
+  if (Array.isArray(args)) return args.map(formatValue).join(', ');
+  return Object.entries(args)
     .map(([name, value]) => `${name}: ${formatValue(value)}`)
     .join(', ');
-  const label = `${event.name}(${args})`;
-  return label.length > MAX_LABEL ? `${label.slice(0, MAX_LABEL - 2)}…)` : label;
 }
 
 /**
@@ -383,6 +397,7 @@ function nodeTooltip(node, root) {
   const title = event.type === 'load' ? 'load' : event.type === 'resume' ? `↻ ${event.name}() resumed` : `${event.name}()`;
   const parts = [`**${title}** #${event.id}  \n${where}  \nat ${event.time} ms`];
   if (event.site) parts.push(`Called from ${relativePath(root, event.site.file)}:${event.site.line}`);
+  if (event.external) parts.push(NOT_TRACED);
   if (event.type === 'resume') parts.push(`Part of call #${event.call} (click to show it)`);
   if (event.type === 'call') {
     const args = event.args ?? {};
@@ -501,10 +516,7 @@ function searchWords(query) {
 function searchText(node, root) {
   const event = node.event;
   if (event.type === 'load') return `load ${relativePath(root, event.file)}`;
-  const args = Object.entries(event.args ?? {})
-    .map(([name, value]) => `${name}: ${formatValue(value)}`)
-    .join(', ');
-  return `${event.name}(${args})  ${nodeDescription(node)}  ${relativePath(root, event.file)}:${event.line}`;
+  return `${event.name}(${argsText(event)})  ${nodeDescription(node)}  ${relativePath(root, event.file)}:${event.line}`;
 }
 
 /**
@@ -646,6 +658,7 @@ function nodeDetails(node, root) {
     lines.push(`// called at ${call.event.time} ms, ${took}`);
     const site = call.event.site;
     if (site) lines.push(`// called from ${relativePath(root, site.file)}:${site.line}  (${site.file})`);
+    if (call.event.external) lines.push(`// ${NOT_TRACED}`);
     lines.push(`// in: ${stackOf(call, root)}`);
     if (call.resumes.length > 0) lines.push(`// resumed ${call.resumes.length} ${call.resumes.length === 1 ? 'time' : 'times'}: ${call.resumes.map((part) => `#${part.event.id}`).join(', ')}`);
   }
