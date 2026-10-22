@@ -22,6 +22,10 @@ function fakeVscode(dir) {
   const views = {};
   /** @type {(string | undefined)[]} what the input boxes will be answered */
   const inputs = [];
+  /** @type {any[][]} the decorations set, last first */
+  const decorations = [];
+  /** @type {string[]} */
+  const status = [];
   /** @type {any[]} */
   const revealed = [];
   /** @type {any[]} */
@@ -90,15 +94,25 @@ function fakeVscode(dir) {
     languages: { setTextDocumentLanguage: async (/** @type {any} */ document, /** @type {string} */ language) => ({ ...document, language }) },
     window: {
       createTreeView: (/** @type {string} */ id, /** @type {any} */ options) =>
-        (views[id] = { provider: options.treeDataProvider, reveal: async (/** @type {any} */ item) => void revealed.push(item), selection: [], dispose() {} }),
+        (views[id] = {
+          provider: options.treeDataProvider,
+          reveal: async (/** @type {any} */ item) => void revealed.push(item),
+          selection: [],
+          onDidChangeSelection: () => ({ dispose() {} }),
+          dispose() {},
+        }),
+      createTextEditorDecorationType: () => ({ dispose() {} }),
+      setStatusBarMessage: (/** @type {string} */ text) => void status.push(text),
       showInputBox: async () => inputs.shift(),
       withProgress: (/** @type {any} */ options, /** @type {() => Promise<void>} */ task) => task(),
       createOutputChannel: () => ({ append() {}, appendLine() {}, show() {}, dispose() {} }),
       showInformationMessage: message('info'),
       showWarningMessage: message('warning'),
       showErrorMessage: message('error'),
-      showTextDocument: async (/** @type {any} */ document, /** @type {any} */ options) =>
-        void opened.push({ file: document.fsPath, text: document.text, language: document.language, options }),
+      showTextDocument: async (/** @type {any} */ document, /** @type {any} */ options) => {
+        opened.push({ file: document.fsPath, text: document.text, language: document.language, options });
+        return { document, setDecorations: (/** @type {any} */ type, /** @type {any[]} */ ranges) => void decorations.unshift(ranges) };
+      },
       activeTextEditor: undefined,
     },
     workspace: {
@@ -108,6 +122,7 @@ function fakeVscode(dir) {
       createFileSystemWatcher: () => ({ onDidCreate() {}, onDidDelete() {}, dispose() {} }),
       onDidChangeWorkspaceFolders: () => ({ dispose() {} }),
       onDidChangeConfiguration: () => ({ dispose() {} }),
+      onDidChangeTextDocument: () => ({ dispose() {} }),
       openTextDocument: async (/** @type {any} */ uri) => {
         const lines = uri.scheme === 'file' ? fs.readFileSync(uri.fsPath, 'utf8').split(/\r?\n/) : [];
         return {
@@ -131,7 +146,7 @@ function fakeVscode(dir) {
       executeCommand: (/** @type {string} */ name, /** @type {any[]} */ ...args) => commands[name]?.(...args), // and the views' own
     },
   };
-  return { vscode, commands, messages, revealed, opened, inputs, views, provider: () => views['jstrace.calls'].provider };
+  return { vscode, commands, messages, revealed, opened, inputs, views, decorations, status, provider: () => views['jstrace.calls'].provider };
 }
 
 /**
@@ -313,4 +328,55 @@ test('the Search view finds calls in every log; a double-click shows one in the 
   assert.equal(view.message, 'No calls match “nothing like it”.');
   await fake.commands['jstrace.clearSearch']();
   assert.deepEqual([search.getChildren(), view.message], [[], undefined]);
+});
+
+test('stepping goes through the run, showing each call where it was called with its values', async (t) => {
+  const dir = copyFixture(t, 'app');
+  const folder = path.join(dir, '.jstrace', 'logs');
+  fs.mkdirSync(folder, { recursive: true });
+  const fake = activate(dir);
+  const provider = fake.provider();
+  const calls = fake.views['jstrace.calls'];
+  const index = path.join(dir, 'index.js');
+  const adds = [1, 2, 3, 4, 5, 6].flatMap((n) => [
+    { type: 'call', id: n + 1, parent: 1, depth: 1, name: 'add', file: index, line: 6, column: 0, args: { n }, site: { file: index, line: 26 }, time: n },
+    { type: 'return', call: n + 1, parent: n + 1, value: n * 2, time: n },
+  ]);
+  fs.writeFileSync(path.join(folder, '2026-01-01T00-00-00.000Z-1.jsonl'), [
+    { type: 'start', pid: 1, argv: ['node', index], cwd: dir, started: '2026-01-01T00:00:00.000Z', time: 0 },
+    { type: 'call', id: 1, parent: null, depth: 0, name: 'main', file: index, line: 23, column: 0, args: {}, time: 0 },
+    ...adds,
+    { type: 'return', call: 1, parent: 1, time: 7 },
+  ].map((event) => `${JSON.stringify(event)}\n`).join(''));
+  const [log] = provider.getChildren();
+  const [main] = provider.getChildren(log);
+  const at = () => {
+    const item = fake.revealed.pop();
+    calls.selection = [item]; // as the reveal selects it
+    const { options } = fake.opened.pop();
+    return [item.node.event.id, options.selection.start.line, options.preserveFocus, fake.decorations[0][0]?.renderOptions.after.contentText];
+  };
+
+  calls.selection = [main];
+  await fake.commands['jstrace.stepInto']();
+  assert.deepEqual(at(), [2, 25, true, 'add(n: 1)  ← 2'], 'into: the first call in main(), on its call site, the view keeping the focus');
+  assert.equal(provider.getTreeItem(provider.getParent(calls.selection[0])).label, 'add() ×6', 'revealed in its group');
+  await fake.commands['jstrace.stepOver']();
+  assert.deepEqual(at(), [3, 25, true, 'add(n: 2)  ← 4']);
+  await fake.commands['jstrace.stepBack']();
+  assert.equal(at()[0], 2);
+  await fake.commands['jstrace.stepOut']();
+  assert.deepEqual(at(), [1, 22, true, 'main()  ← undefined'], 'out: the caller, at its own code since it has no site');
+  assert.deepEqual(fake.decorations[1], [], 'the last step lost its highlight');
+  await fake.commands['jstrace.stepBackOver']();
+  assert.deepEqual([fake.revealed, fake.status], [[], ['jstrace: no call before it']], 'nothing before main()');
+
+  await fake.commands['jstrace.stepOver'](log);
+  assert.equal(at()[0], 1, 'from a log: its first call (the context menu passes the item)');
+  const group = provider.getParent(provider.nodeItem(log, log.trace.nodes.get(7)));
+  await fake.commands['jstrace.stepOver'](group);
+  assert.deepEqual([fake.revealed, fake.status.length], [[], 2], 'over a group: past its last call, here the end');
+  fake.views['jstrace.searchResults'].selection = [provider.nodeItem(log, log.trace.nodes.get(4))];
+  await fake.commands['jstrace.stepInto']('search');
+  assert.equal(at()[0], 5, "from the Search view's selection (its keys)");
 });

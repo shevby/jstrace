@@ -469,6 +469,24 @@ class SearchProvider {
   }
 }
 
+/**
+ * A position from a log in a document: lines count from 1, columns from 0. Without a column
+ * (a call site), it's where `name` is written on the line.
+ * @param {vscode.TextDocument} document
+ * @param {number} line
+ * @param {number | null} column
+ * @param {string} [name]
+ * @returns {vscode.Position}
+ */
+function positionIn(document, line, column, name) {
+  const at = Math.max(0, line - 1);
+  const character = column ?? (at < document.lineCount ? logs.columnOf(document.lineAt(at).text, name ?? '') : 0);
+  return document.validatePosition(new vscode.Position(at, character));
+}
+
+/** The longest text a step shows at the end of the line, in characters. */
+const MAX_STEP_TEXT = 150;
+
 /** How soon a second click on a search result makes a double-click, in ms. */
 const DOUBLE_CLICK = 500;
 
@@ -485,6 +503,14 @@ function activate(context) {
   search.view = searchView;
   /** @type {{ element: SearchItem | undefined, time: number, opening: Promise<unknown> }} the last click on a result */
   const click = { element: undefined, time: 0, opening: Promise.resolve() };
+  /** The line a step is at, like a debugger's, with the call's values at its end. */
+  const stepDecoration = vscode.window.createTextEditorDecorationType({
+    isWholeLine: true,
+    backgroundColor: new vscode.ThemeColor('editor.stackFrameHighlightBackground'),
+    after: { color: new vscode.ThemeColor('editorCodeLens.foreground'), fontStyle: 'italic', margin: '0 0 0 2em' },
+  });
+  /** @type {{ item: NodeItem | undefined, editor: vscode.TextEditor | undefined }} where the last step went */
+  const stepped = { item: undefined, editor: undefined };
   const output = vscode.window.createOutputChannel('jstrace');
   /** @type {Map<string, string>} the details tabs' contents, by URI */
   const details = new Map();
@@ -534,9 +560,86 @@ function activate(context) {
     provider.refresh();
   }
 
+  /**
+   * Forgets the last step and takes its highlight away.
+   * @returns {void}
+   */
+  function clearStep() {
+    stepped.editor?.setDecorations(stepDecoration, []);
+    Object.assign(stepped, { item: undefined, editor: undefined });
+  }
+
+  /**
+   * Steps through a run (4.10) from the selected call in the Calls or Search view: selects
+   * where the step goes in the Calls view and shows where it was called (its code, without
+   * a site), with the line highlighted and the call's values at its end. The view keeps the
+   * focus, so the next step's keys go on working there.
+   * @param {'into' | 'back' | 'over' | 'backOver' | 'out'} how see `step` in `logs.js`
+   * @param {unknown} from the item (from a context menu), or `'search'` for the Search
+   *   view's selection (its keys); else the Calls view's selection
+   * @returns {Promise<void>}
+   */
+  async function stepTo(how, from) {
+    /** @type {Item | SearchItem | undefined} */
+    const element = from && typeof from === 'object' ? /** @type {Item} */ (from) : from === 'search' ? searchView.selection[0] : view.selection[0];
+    /** @type {LogItem | undefined} */
+    let log;
+    /** @type {TraceNode | undefined} */
+    let next;
+    if (element?.kind === 'node') {
+      log = element.log;
+      next = logs.step(log.trace, element.node, how);
+    } else if (element?.kind === 'group') {
+      log = element.log;
+      const nodes = element.row.nodes ?? [];
+      const forward = how === 'into' || how === 'over';
+      next = how === 'into' ? nodes[0] : logs.step(log.trace, forward ? nodes[nodes.length - 1] : nodes[0], how);
+    } else if (element?.kind === 'log') {
+      log = element;
+      if (how === 'into' || how === 'over') next = log.trace.nodes.values().next().value;
+    } else {
+      return void vscode.window.showInformationMessage('jstrace: select a call in the Calls view to step from it.');
+    }
+    if (!next) return void vscode.window.setStatusBarMessage(`jstrace: no ${how === 'out' ? 'caller' : how.startsWith('back') ? 'call before it' : 'call after it'}`, 3000);
+    const item = provider.nodeItem(log, next);
+    const event = next.event;
+    const [file, line, column, name] = event.site
+      ? [event.site.file, event.site.line, null, logs.callName(event.name)]
+      : [event.file, event.line ?? 1, event.column ?? 0, undefined];
+    clearStep();
+    stepped.item = item;
+    try {
+      const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+      const position = positionIn(document, line, column, name);
+      const editor = await vscode.window.showTextDocument(document, { selection: new vscode.Range(position, position), preserveFocus: true });
+      const tree = provider.getTreeItem(item);
+      let text = `${tree.label}${tree.description ? `  ${tree.description}` : ''}`;
+      if (text.length > MAX_STEP_TEXT) text = `${text.slice(0, MAX_STEP_TEXT - 1)}…`;
+      const end = new vscode.Position(position.line, document.lineAt(position.line).text.length);
+      editor.setDecorations(stepDecoration, [{ range: new vscode.Range(end, end), renderOptions: { after: { contentText: text } } }]);
+      stepped.editor = editor;
+    } catch (error) {
+      vscode.window.showErrorMessage(`jstrace: can't open ${file}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    await view.reveal(item, { select: true, focus: true });
+  }
+
   context.subscriptions.push(
     view,
     searchView,
+    stepDecoration,
+    { dispose: clearStep },
+    view.onDidChangeSelection((event) => {
+      if (stepped.item && event.selection[0] !== stepped.item) clearStep(); // selected some other way
+    }),
+    vscode.workspace.onDidChangeTextDocument((event) => {
+      if (event.contentChanges.length > 0 && event.document === stepped.editor?.document) clearStep(); // its line may have moved
+    }),
+    vscode.commands.registerCommand('jstrace.stepInto', (/** @type {unknown} */ from) => stepTo('into', from)),
+    vscode.commands.registerCommand('jstrace.stepBack', (/** @type {unknown} */ from) => stepTo('back', from)),
+    vscode.commands.registerCommand('jstrace.stepOver', (/** @type {unknown} */ from) => stepTo('over', from)),
+    vscode.commands.registerCommand('jstrace.stepBackOver', (/** @type {unknown} */ from) => stepTo('backOver', from)),
+    vscode.commands.registerCommand('jstrace.stepOut', (/** @type {unknown} */ from) => stepTo('out', from)),
     output,
     watcher,
     { dispose: () => clearTimeout(pending) },
@@ -604,9 +707,7 @@ function activate(context) {
       async (file, line, column, name) => {
         try {
           const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
-          const at = Math.max(0, line - 1);
-          const character = column ?? (at < document.lineCount ? logs.columnOf(document.lineAt(at).text, name ?? '') : 0);
-          const position = document.validatePosition(new vscode.Position(at, character));
+          const position = positionIn(document, line, column, name);
           // The editor takes the focus, since an unfocused one doesn't show its cursor.
           await vscode.window.showTextDocument(document, { selection: new vscode.Range(position, position) });
         } catch (error) {

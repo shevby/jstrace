@@ -448,6 +448,41 @@ function rowTooltip(row, root) {
 }
 
 /**
+ * Whether a node ran inside another one (not counting the node itself).
+ * @param {TraceNode} node
+ * @param {TraceNode} ancestor
+ * @returns {boolean}
+ */
+function isInside(node, ancestor) {
+  for (let at = node.parent; at; at = at.parent) if (at === ancestor) return true;
+  return false;
+}
+
+/**
+ * Where a step through a run (4.10) goes from a node, in the order things ran (a node's id
+ * order, in which what ran inside a node comes right after it):
+ * - `into`: the next node; `back`: the one before.
+ * - `over`: the next node not inside this one; `backOver`: the one before, at this level
+ *   or above (the previous node of the same caller, or the caller).
+ * - `out`: the node it ran in.
+ * @param {Trace} trace
+ * @param {TraceNode} node
+ * @param {'into' | 'back' | 'over' | 'backOver' | 'out'} how
+ * @returns {TraceNode | undefined} none at either end of the log, or out of a root
+ */
+function step(trace, node, how) {
+  if (how === 'out') return node.parent;
+  const order = [...trace.nodes.values()];
+  const at = order.indexOf(node);
+  if (at < 0) return undefined;
+  if (how === 'into') return order[at + 1];
+  if (how === 'over') return order.slice(at + 1).find((next) => !isInside(next, node));
+  let before = order[at - 1];
+  if (how === 'backOver') while (before?.parent && !isInside(node, before.parent)) before = before.parent;
+  return before;
+}
+
+/**
  * The words of a search, lowercased.
  * @param {string} query
  * @returns {string[]}
@@ -658,6 +693,7 @@ module.exports = {
   columnOf,
   search,
   highlights,
+  step,
   stackOf,
   nodeDetails,
   groupDetails,

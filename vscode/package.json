@@ -122,6 +122,36 @@
         "icon": "$(list-tree)"
       },
       {
+        "command": "jstrace.stepInto",
+        "title": "Step Into (Next Call)",
+        "category": "jstrace",
+        "icon": "$(debug-step-into)"
+      },
+      {
+        "command": "jstrace.stepOver",
+        "title": "Step Over (Next Call Here)",
+        "category": "jstrace",
+        "icon": "$(debug-step-over)"
+      },
+      {
+        "command": "jstrace.stepOut",
+        "title": "Step Out (to the Caller)",
+        "category": "jstrace",
+        "icon": "$(debug-step-out)"
+      },
+      {
+        "command": "jstrace.stepBack",
+        "title": "Step Back (Previous Call)",
+        "category": "jstrace",
+        "icon": "$(debug-step-back)"
+      },
+      {
+        "command": "jstrace.stepBackOver",
+        "title": "Step Back Over (Previous Call Here)",
+        "category": "jstrace",
+        "icon": "$(debug-reverse-continue)"
+      },
+      {
         "command": "jstrace.open",
         "title": "Go to Code",
         "category": "jstrace"
@@ -220,6 +250,11 @@
           "command": "jstrace.openText",
           "when": "view == jstrace.calls && viewItem == log",
           "group": "1_details@3"
+        },
+        {
+          "submenu": "jstrace.step",
+          "when": "view =~ /^jstrace[.](calls|searchResults)$/ && viewItem =~ /^(log|call|callSite|resume|load|group)$/",
+          "group": "0_go@9"
         }
       ],
       "explorer/context": [
@@ -246,6 +281,28 @@
           "command": "jstrace.openResult",
           "when": "false"
         }
+      ],
+      "jstrace.step": [
+        {
+          "command": "jstrace.stepInto",
+          "group": "1_step@0"
+        },
+        {
+          "command": "jstrace.stepOver",
+          "group": "1_step@1"
+        },
+        {
+          "command": "jstrace.stepOut",
+          "group": "1_step@2"
+        },
+        {
+          "command": "jstrace.stepBack",
+          "group": "2_step@3"
+        },
+        {
+          "command": "jstrace.stepBackOver",
+          "group": "2_step@4"
+        }
       ]
     },
     "configuration": {
@@ -264,6 +321,69 @@
           "markdownDescription": "When a function is called this many times or more under the same call, its calls are grouped into one row (`add() ×12`), where the first one was. The resumes of an async call are grouped the same way. 0 turns grouping off."
         }
       }
-    }
+    },
+    "submenus": [
+      {
+        "id": "jstrace.step",
+        "label": "Step"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "jstrace.stepInto",
+        "key": "alt+down",
+        "when": "focusedView == jstrace.calls"
+      },
+      {
+        "command": "jstrace.stepInto",
+        "key": "alt+down",
+        "when": "focusedView == jstrace.searchResults",
+        "args": "search"
+      },
+      {
+        "command": "jstrace.stepOver",
+        "key": "alt+shift+down",
+        "when": "focusedView == jstrace.calls"
+      },
+      {
+        "command": "jstrace.stepOver",
+        "key": "alt+shift+down",
+        "when": "focusedView == jstrace.searchResults",
+        "args": "search"
+      },
+      {
+        "command": "jstrace.stepOut",
+        "key": "alt+left",
+        "when": "focusedView == jstrace.calls"
+      },
+      {
+        "command": "jstrace.stepOut",
+        "key": "alt+left",
+        "when": "focusedView == jstrace.searchResults",
+        "args": "search"
+      },
+      {
+        "command": "jstrace.stepBack",
+        "key": "alt+up",
+        "when": "focusedView == jstrace.calls"
+      },
+      {
+        "command": "jstrace.stepBack",
+        "key": "alt+up",
+        "when": "focusedView == jstrace.searchResults",
+        "args": "search"
+      },
+      {
+        "command": "jstrace.stepBackOver",
+        "key": "alt+shift+up",
+        "when": "focusedView == jstrace.calls"
+      },
+      {
+        "command": "jstrace.stepBackOver",
+        "key": "alt+shift+up",
+        "when": "focusedView == jstrace.searchResults",
+        "args": "search"
+      }
+    ]
   }
 }
