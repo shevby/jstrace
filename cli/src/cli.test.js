@@ -38,10 +38,8 @@ test('an unknown command is a wrong command line', () => {
   assert.match(err[0], /^Unknown command: trace/);
 });
 
-test('instrument and restore take exactly one folder', () => {
-  for (const argv of [['instrument'], ['restore', 'a', 'b']]) {
-    const { code, err } = run(argv);
-    assert.equal(code, 2);
-    assert.match(err[0], /takes one argument/);
-  }
+test('instrument takes at least one path', () => {
+  const { code, err } = run(['instrument']);
+  assert.equal(code, 2);
+  assert.match(err[0], /^instrument takes the files or folders/);
 });
