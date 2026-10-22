@@ -17,7 +17,8 @@ All done; see [DONE.md](DONE.md).
 
 ## 1. Instrumenter (CLI)
 
-- [ ] 1.1 Project and config: the project is found from the current directory (see Glossary). `jstrace.config.json` is created there with defaults by the first `instrument` and validated with readable errors. Include/exclude globs are matched by a hand-written matcher (`*`, `**`, `?`).
+Done items are in [DONE.md](DONE.md).
+
 - [ ] 1.2 File walk and backup: matched files under the targets are copied to `.jstrace/backup/` (paths relative to the project), and `manifest.json` there records a hash of what was written to each, so restore can tell whether a file was edited afterwards.
 - [ ] 1.3 `jstrace restore [target...]`: puts the originals back (all, or those under the targets) and keeps the logs. A file edited since instrumenting is reported, not overwritten.
 - [ ] 1.4 Parsing: acorn, `sourceType: 'script'`, with locations. A file that fails to parse is skipped with a warning naming it and the reason.
