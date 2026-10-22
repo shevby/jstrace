@@ -152,6 +152,12 @@
         "icon": "$(debug-reverse-continue)"
       },
       {
+        "command": "jstrace.hideStep",
+        "title": "Hide Step Highlight",
+        "category": "jstrace",
+        "enablement": "jstrace.stepShown"
+      },
+      {
         "command": "jstrace.open",
         "title": "Go to Code",
         "category": "jstrace"
@@ -397,6 +403,16 @@
         "key": "alt+shift+up",
         "when": "focusedView == jstrace.searchResults",
         "args": "search"
+      },
+      {
+        "command": "jstrace.hideStep",
+        "key": "escape",
+        "when": "jstrace.stepShown && (focusedView == jstrace.calls || focusedView == jstrace.searchResults)"
+      },
+      {
+        "command": "jstrace.hideStep",
+        "key": "escape",
+        "when": "jstrace.stepShown && editorTextFocus && !editorHasSelection && !editorHasMultipleSelections && !findWidgetVisible && !suggestWidgetVisible && !parameterHintsVisible && !inlineSuggestionVisible && !inSnippetMode && !renameInputVisible && !referenceSearchVisible && !markersNavigationVisible && !notificationToastsVisible && vim.mode != 'Insert'"
       }
     ]
   }
