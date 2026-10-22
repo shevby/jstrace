@@ -57,7 +57,8 @@ It's a debugging aid, not a product. Keep it small. Slow tracing is fine, and sc
     "exclude": [".git/**", ".jstrace/**", "**/*.min.js"],
     "maxDepth": 3,
     "maxString": 200,
-    "maxLine": 2000
+    "maxLine": 2000,
+    "maxRepeat": 20
   }
   ```
   `node_modules` is *not* excluded by default, since the user's own code can be there.
@@ -75,16 +76,19 @@ It's a debugging aid, not a product. Keep it small. Slow tracing is fine, and sc
   - Log folder: `<project>/.jstrace/logs` (an absolute path baked in at instrument time), overridden by `JSTRACE_OUT` when `process.env` exists.
   - **One instance per process**: each process knows nothing of the others and writes `<startTime>-<pid>.jsonl` (the source of truth; `startTime` is ISO with `-` for `:`) plus `<startTime>-<pid>.txt` (a readable indented tree: `name(param: value) #id  file:line`, then `← value` or `← throws …`, paths relative to the project).
   - Values are serialized safely as JSON: what JSON can't hold becomes a string in brackets (`"[undefined]"`, `"[Function f]"`, `"[Circular]"`, `"[Error: msg]"`), a class instance `{"[Class]": {…}}`, getters aren't called. Depth, string length, and (roughly) each value's length are limited by `maxDepth`/`maxString`/`maxLine`.
+  - **Repeats** (`maxRepeat`, 0 for no limit): a call (all its parts) or the top level logs its first `maxRepeat` calls of each function, and a call its first `maxRepeat` resumes. Past that, a call or resume is muted: kept on the stack, but nothing in it is serialized or logged. It's the guard against runaway loops (including async loops and long iterations). The counts are logged as `skip` events when the call ends, or the process (`process.once('exit')`) for the top level.
   - **Call trees** follow the synchronous stack. When an async function resumes after an `await`, the rest of it is a new root, `↻ foo() #id resumed`. A generator resumes inside the caller of `next()`. Callbacks from timers, events, and `.then()` are new roots with no known origin; there's no runtime-agnostic way to tell.
   - A rejected `await` throws without `r` being called, so `sa` turns a rejection into a value that `r` rethrows after logging the resume. That makes each `await` of a promise one microtask tick slower. `gen.throw()`/`gen.return()` log the resume at the generator's next event.
   - **Events** (one JSON object per line, each with `type` and `time`, in ms since the start):
     - `start`: `pid`, `argv`, `cwd`, `started` (ISO); the first line.
     - `load`, `call`, `resume`: tree nodes with `id`, `parent` (a node id, or `null` for a root), and `depth`. `load` has `file`. `call` has `name`, `file` (absolute), `line`, `column`, and `args` (keyed by parameter name). `resume` has the same, plus `call`, the call it's part of.
     - `return` (`value`, left out for `undefined`), `throw` (`error`), `yield` (`value`): `call`, plus `parent`, the node (the call, or a resume of it) they happened in.
+    - `skip`: calls of a function (`name`, `file`, `line`, `column`) past `maxRepeat`, `count` of them, or with `resumes: true` resumes of the call itself; `parent` is the call's last logged part (`null` for the top level). Written before the call's `return`/`throw`.
 - **VSCode extension**:
   - Its own activity-bar container with a tree view, "Calls": projects (only with more than one) → log files (newest first, labeled by the script and arguments from `argv`, with start time and pid) → call tree. Buttons to refresh, clear logs (with a confirmation), and restore. A log's inline button opens its `.txt`.
   - It auto-detects `.jstrace/` in each workspace folder and watches for logs being added or deleted, but doesn't follow one being written (no live tailing). A log is read again once it changed, when its node is listed or expanded.
   - A node's label is like the `.txt`'s (`name(param: value)`, `load file`, `↻ name() resumed`). Its description is how it ended: for a call, what it returned or threw in the end, even in a later resume. The hover has the arguments and the value, pretty-printed. A call that threw gets a red icon.
+  - Grouping (setting `jstrace.groupRepeats`, default 5, 0 for none): under one node, a function called that many times (or with calls skipped) becomes one row `name() ×count` where its first call was, with its calls (and skipped ones) inside; the resumes of a function's calls group the same way. Skips without a group are rows `… name() ×count not logged`.
   - Clicking a call or load jumps to it in the original file, focusing the editor (an unfocused one hides its cursor). Clicking a resume also selects its call in the tree. Line numbers are right even while the file is instrumented; the column may be off a little.
   - Setting `jstrace.cliPath`: the CLI, as a `.js` script (run with VSCode's own Node via `ELECTRON_RUN_AS_NODE`) or a program. Empty means the CLI packed in the extension, else the repo's `cli/` beside it, else `jstrace` on the PATH. The explorer's context menu gets "Inject jstrace" on folders and files, which runs `jstrace instrument <them>` in their workspace folder (each folder of a multi-root workspace is a project of its own). Inject and Restore report the CLI's summary, plus what it skipped or left alone (all of it in the "jstrace" output channel).
   - Code: `logs.js` (parsing and the text shown) and `cli.js` (running the CLI) don't need `vscode`. `extension.test.js` runs the extension against a fake `vscode`.

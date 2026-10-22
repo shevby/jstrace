@@ -88,6 +88,7 @@ function fakeVscode(dir) {
       getConfiguration: () => ({ get: (/** @type {string} */ key, /** @type {any} */ value) => value }),
       createFileSystemWatcher: () => ({ onDidCreate() {}, onDidDelete() {}, dispose() {} }),
       onDidChangeWorkspaceFolders: () => ({ dispose() {} }),
+      onDidChangeConfiguration: () => ({ dispose() {} }),
       openTextDocument: async (/** @type {any} */ uri) => ({ fsPath: uri.fsPath, validatePosition: (/** @type {any} */ position) => position }),
     },
     commands: {
@@ -135,7 +136,7 @@ test('the extension injects, shows the call trees, jumps to code, restores and c
   assert.equal(provider.getParent(app), undefined);
   const roots = provider.getChildren(app);
   assert.equal(provider.getTreeItem(roots[0]).label, 'load index.js');
-  const main = roots.find((/** @type {any} */ item) => item.node.event.name === 'main');
+  const main = roots.find((/** @type {any} */ item) => item.node?.event.name === 'main');
   const mainItem = provider.getTreeItem(main);
   assert.deepEqual([mainItem.label, mainItem.description, mainItem.iconPath.id], ['main()', '← undefined', 'symbol-function']);
   assert.equal(mainItem.command.command, 'jstrace.open');
@@ -152,11 +153,18 @@ test('the extension injects, shows the call trees, jumps to code, restores and c
   const divide = provider.getChildren(calls.find((/** @type {any} */ item) => item.node.event.name === 'safeDivide'))[0];
   assert.equal(provider.getTreeItem(divide).iconPath.id, 'error');
 
-  const resume = roots.find((/** @type {any} */ item) => item.node.event.type === 'resume' && item.node.event.name === 'main');
+  const resumes = roots.find((/** @type {any} */ item) => item.kind === 'group' && item.row.event.name === 'double');
+  const groupItem = provider.getTreeItem(resumes);
+  assert.equal(groupItem.label, '↻ double() resumed ×6', 'the resumes of its 6 calls are grouped (jstrace.groupRepeats is 5)');
+  assert.equal(groupItem.iconPath.id, 'layers');
+  const [resume] = provider.getChildren(resumes);
+  assert.equal(provider.getParent(resume), resumes);
   const resumeItem = provider.getTreeItem(resume);
-  assert.equal(resumeItem.label, '↻ main() resumed');
+  assert.equal(resumeItem.label, '↻ double() resumed');
   await fake.commands[resumeItem.command.command](...resumeItem.command.arguments);
-  assert.equal(fake.revealed.pop(), main, 'a resume shows its call');
+  const double = fake.revealed.pop();
+  assert.equal(double.node.event.id, resume.node.event.call, 'a resume shows its call');
+  assert.equal(provider.getTreeItem(provider.getParent(double)).label, 'total(values: [1,2,3])', 'which the tree can reach');
 
   fake.messages.length = 0;
   await fake.commands['jstrace.restore']();

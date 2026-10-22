@@ -29,7 +29,8 @@ All done; see [DONE.md](DONE.md).
 
 ## 4. Later / maybe
 
-- [ ] 4.1 A cap on the number of events per process (`maxCalls` in the config) for runaway loops. *(proposed)*
+4.1 and 4.5 are done; see [DONE.md](DONE.md).
+
 - [ ] 4.2 Live tailing: the tree view follows a log as it's written. *(proposed)*
 - [ ] 4.3 Search and filter in the tree view (by function name or file). *(proposed)*
 - [ ] 4.4 Node's own objects in values (a `Timeout` returned by `setTimeout`, its `TimersList`, sockets) shown as just `[Timeout]`, instead of their internal fields filling a whole line. *(proposed)*

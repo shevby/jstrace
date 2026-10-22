@@ -22,6 +22,7 @@ const MAX_LABEL = 120;
  * @property {Record<string, any>} [end] the `return`, `throw` or `yield` that ended this node
  * @property {Record<string, any>} [outcome] for a call, its `return` or `throw`, wherever it happened
  * @property {TraceNode[]} resumes for a call, the nodes it went on in after suspending
+ * @property {Record<string, any>[]} skips the `skip` events in it: calls past `maxRepeat`, not logged
  */
 
 /**
@@ -29,7 +30,20 @@ const MAX_LABEL = 120;
  * @typedef {object} Trace
  * @property {Record<string, any> | undefined} start its `start` event, missing for an empty log
  * @property {TraceNode[]} roots the nodes with no parent, in order
+ * @property {Record<string, any>[]} skips the `skip` events with no parent
  * @property {Map<number, TraceNode>} nodes every node by id
+ */
+
+/**
+ * A row of the tree under a node (or at the top of a log): a node, a group of the calls of
+ * one function (or the resumes of its calls) there, or calls of a function that weren't logged.
+ * @typedef {object} Row
+ * @property {'node' | 'group' | 'skip'} kind
+ * @property {Record<string, any>} event the node's; a group's first node's; a skip's `skip` event
+ * @property {string} key what a group's nodes share, and a skip's function
+ * @property {TraceNode} [node] a node's
+ * @property {TraceNode[]} [nodes] a group's, in order
+ * @property {Record<string, any>} [skip] a group's `skip` event, when calls of it weren't logged
  */
 
 /**
@@ -40,7 +54,7 @@ const MAX_LABEL = 120;
  */
 function parseLog(text) {
   /** @type {Trace} */
-  const trace = { start: undefined, roots: [], nodes: new Map() };
+  const trace = { start: undefined, roots: [], skips: [], nodes: new Map() };
   for (const line of text.split('\n')) {
     /** @type {Record<string, any>} */
     let event;
@@ -55,7 +69,7 @@ function parseLog(text) {
     } else if (event.type === 'load' || event.type === 'call' || event.type === 'resume') {
       const parent = event.parent === null ? undefined : trace.nodes.get(event.parent);
       /** @type {TraceNode} */
-      const node = { event, parent, children: [], resumes: [] };
+      const node = { event, parent, children: [], resumes: [], skips: [] };
       trace.nodes.set(event.id, node);
       (parent ? parent.children : trace.roots).push(node);
       if (event.type === 'resume') trace.nodes.get(event.call)?.resumes.push(node);
@@ -64,9 +78,63 @@ function parseLog(text) {
       if (node) node.end = event;
       const call = trace.nodes.get(event.call);
       if (call && event.type !== 'yield') call.outcome = event;
+    } else if (event.type === 'skip') {
+      const node = event.parent === null ? undefined : trace.nodes.get(event.parent);
+      (node ? node.skips : trace.skips).push(event);
     }
   }
   return trace;
+}
+
+/**
+ * What the calls of one function share (its position), or the resumes of its calls.
+ * @param {Record<string, any>} event a `call`, `resume` or `skip`
+ * @returns {string} `''` for what's never grouped (a load)
+ */
+function groupKey(event) {
+  if (event.type === 'load') return '';
+  return `${event.type === 'resume' || event.resumes ? 'resume:' : ''}${event.file}:${event.line}:${event.column}`;
+}
+
+/**
+ * The rows under a node: its children, with the calls of a function (or the resumes of its
+ * calls) made at least `min` times there grouped into one row where the first one was, and
+ * calls that weren't logged with their group, or else as a row of their own at the end.
+ * @param {TraceNode[]} nodes the node's children (or a log's roots)
+ * @param {Record<string, any>[]} skips its `skip` events
+ * @param {number} min how many make a group; 0 for none
+ * @returns {Row[]}
+ */
+function rows(nodes, skips, min) {
+  /** @type {Map<string, TraceNode[]>} */
+  const byKey = new Map();
+  for (const node of nodes) {
+    const key = groupKey(node.event);
+    if (!key) continue;
+    const same = byKey.get(key);
+    if (same) same.push(node);
+    else byKey.set(key, [node]);
+  }
+  const skipped = new Map(skips.map((event) => [groupKey(event), event]));
+  /** @type {Row[]} */
+  const result = [];
+  /** @type {Set<string>} */
+  const grouped = new Set();
+  for (const node of nodes) {
+    const key = groupKey(node.event);
+    const same = byKey.get(key) ?? [];
+    const skip = skipped.get(key);
+    if (min > 0 && key && (same.length >= min || skip)) {
+      if (grouped.has(key)) continue;
+      grouped.add(key);
+      skipped.delete(key);
+      result.push({ kind: 'group', event: node.event, key, nodes: same, skip });
+    } else {
+      result.push({ kind: 'node', event: node.event, key, node });
+    }
+  }
+  for (const [key, event] of skipped) result.push({ kind: 'skip', event, key });
+  return result;
 }
 
 /**
@@ -257,8 +325,64 @@ function nodeTooltip(node, root) {
   return parts.join('\n\n');
 }
 
+/**
+ * A group's label: `name() ×count` (calls not logged included), or `↻ name() resumed ×count`.
+ * @param {Row} row a group
+ * @returns {string}
+ */
+function groupLabel(row) {
+  const count = (row.nodes?.length ?? 0) + (row.skip?.count ?? 0);
+  return row.event.type === 'resume' ? `↻ ${row.event.name}() resumed ×${count}` : `${row.event.name}() ×${count}`;
+}
+
+/**
+ * A group's description: how many of its calls weren't logged, and how many threw.
+ * @param {Row} row a group
+ * @returns {string}
+ */
+function groupDescription(row) {
+  const threw = (row.nodes ?? []).filter((node) => nodeDescription(node).startsWith('← throws')).length;
+  return [row.skip ? `${row.skip.count} not logged` : '', threw ? `${threw} threw` : ''].filter(Boolean).join(', ');
+}
+
+/**
+ * A skip's label: `… name() ×count not logged`, or `… name() resumed ×count not logged`.
+ * @param {Record<string, any>} event a `skip`
+ * @returns {string}
+ */
+function skipLabel(event) {
+  return `… ${event.name}()${event.resumes ? ' resumed' : ''} ×${event.count} not logged`;
+}
+
+/**
+ * A group's or a skip's hover, in Markdown.
+ * @param {Row} row
+ * @param {string} root the project folder
+ * @returns {string}
+ */
+function rowTooltip(row, root) {
+  const event = row.event;
+  const where = `${relativePath(root, event.file)}:${event.line}`;
+  const why = 'past `maxRepeat` in `jstrace.config.json` (0 logs every call)';
+  if (row.kind === 'skip') {
+    const what = event.resumes ? 'resumed' : 'called';
+    const note = event.resumes ? ' What ran in those parts is neither logged nor counted.' : '';
+    return `**${event.name}()** ${what} ${event.count} more ${event.count === 1 ? 'time' : 'times'} here, not logged: ${why}.${note}  \n${where}`;
+  }
+  const logged = row.nodes?.length ?? 0;
+  if (event.type === 'resume') return `**${event.name}()** resumed ${logged} times here  \n${where}`;
+  const lines = [`**${event.name}()** called ${logged + (row.skip?.count ?? 0)} times here  \n${where}`];
+  if (row.skip) lines.push(`${logged} logged, ${row.skip.count} not: ${why}`);
+  return lines.join('\n\n');
+}
+
 module.exports = {
   parseLog,
+  rows,
+  groupLabel,
+  groupDescription,
+  skipLabel,
+  rowTooltip,
   readLog,
   listLogs,
   clearLogs,

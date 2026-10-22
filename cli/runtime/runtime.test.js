@@ -2,6 +2,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -99,7 +100,7 @@ const o = { n: 1 }; o.self = o;
   new (class Empty {})(), Object.create(null), { a: { b: { c: 1 } } }, [1, [2, [3]]], new Map([['k', 1]]),
   new Set([1]), new Date(0), /x/g, new TypeError('bad'), new Uint8Array([1, 2]), new ArrayBuffer(4),
   Promise.resolve(), { get g() { return 1; }, set s(v) {} }, { ['__proto__']: 1 }].map((v) => f(v));`,
-    { maxDepth: 2, maxString: 5 },
+    { maxDepth: 2, maxString: 5, maxRepeat: 0 },
   );
   const logged = events.filter((event) => event.type === 'call' && event.name === 'f').map((event) => event.args.v);
   assert.deepEqual(logged, [
@@ -179,6 +180,90 @@ run(); fail();`,
     '    ← throws "[Error: in]"',
     '  ← "in"',
   ]);
+});
+
+test('past maxRepeat, the calls of a function in a call are counted, not logged, with all they do', async (t) => {
+  const { events, tree } = await trace(
+    t,
+    `function inner(i) { return i; }
+function step(i) { return inner(i); }
+function loop() { for (let i = 0; i < 5; i++) step(i); inner(9); }
+async function wait(i) { await null; return i; }
+async function main() { for (let i = 0; i < 4; i++) await wait(i); }
+loop();
+module.exports = main();`,
+    { maxRepeat: 2 },
+  );
+  assert.deepEqual(tree.slice(1), [
+    'load x.js',
+    'loop() #2  x.js:3',
+    '  step(i: 0) #3  x.js:2',
+    '    inner(i: 0) #4  x.js:1',
+    '      ← 0',
+    '    ← 0',
+    '  step(i: 1) #5  x.js:2',
+    '    inner(i: 1) #6  x.js:1',
+    '      ← 1',
+    '    ← 1',
+    '  inner(i: 9) #7  x.js:1',
+    '    ← 9',
+    '  … step() called 3 more times, not logged  x.js:2',
+    '  ← undefined',
+    'main() #8  x.js:5',
+    '  wait(i: 0) #9  x.js:4',
+    '↻ wait() #9 resumed  x.js:4',
+    '  ← 0',
+    '↻ main() #8 resumed  x.js:5',
+    '  wait(i: 1) #12  x.js:4',
+    '↻ wait() #12 resumed  x.js:4',
+    '  ← 1',
+    '↻ main() #8 resumed  x.js:5',
+    '  … wait() called 1 more time, not logged  x.js:4',
+    '  … main() resumed 2 more times, not logged  x.js:5',
+    '  ← undefined',
+  ]);
+  assert.deepEqual(stable(events.filter((event) => event.type === 'skip')), [
+    { type: 'skip', parent: 2, name: 'step', line: 2, column: 0, count: 3 },
+    { type: 'skip', parent: 14, name: 'wait', line: 4, column: 0, count: 1 },
+    { type: 'skip', parent: 14, name: 'main', line: 5, column: 0, count: 2, resumes: true },
+  ]);
+  assert.deepEqual(stable(events.filter((event) => event.type === 'return' && event.call === 8)), [{ type: 'return', call: 8, parent: 14 }]);
+});
+
+test('past maxRepeat, the resumes of a generator are counted, not logged, and its return still is', async (t) => {
+  const { tree } = await trace(t, 'function* count() { for (let i = 0; i < 5; i++) yield i; return 9; }\nfunction run() { return [...count()].length; }\nrun();', { maxRepeat: 2 });
+  assert.deepEqual(tree.slice(2), [
+    'run() #2  x.js:2',
+    '  count() #3  x.js:1',
+    '    ← yields 0',
+    '  ↻ count() #3 resumed  x.js:1',
+    '    ← yields 1',
+    '  ↻ count() #3 resumed  x.js:1',
+    '    ← yields 2',
+    '    … count() resumed 3 more times, not logged  x.js:1',
+    '    ← 9',
+    '  ← 5',
+  ]);
+});
+
+test('maxRepeat 0 logs every call', async (t) => {
+  const { events } = await trace(t, 'function f() {}\nfunction loop() { for (let i = 0; i < 30; i++) f(); }\nloop();', { maxRepeat: 0 });
+  assert.equal(events.filter((event) => event.type === 'call' && event.name === 'f').length, 30);
+  assert.equal(events.filter((event) => event.type === 'skip').length, 0);
+});
+
+test('calls skipped at the top level are reported when the process exits', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jstrace-runtime-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const logs = path.join(dir, 'logs');
+  const source = 'function f(i) { return i; }\nfor (let i = 0; i < 25; i++) f(i);\nsetTimeout(() => f(-1), 1);';
+  fs.writeFileSync(path.join(dir, 'x.js'), instrumentSource(source, { file: path.join(dir, 'x.js'), options: { logs, root: dir } }).code);
+  execFileSync(process.execPath, ['x.js'], { cwd: dir });
+  const [log] = readLogs(logs);
+  const calls = log.events.filter((event) => event.type === 'call' && event.name === 'f');
+  assert.deepEqual(calls.map((event) => event.args.i), [...Array(20).keys(), -1], 'maxRepeat is 20 by default; the callback counts its own');
+  assert.deepEqual(stable(log.events.slice(-1)), [{ type: 'skip', parent: null, name: 'f', line: 1, column: 0, count: 5 }]);
+  assert.equal(log.tree[log.tree.length - 1], '… f() called 5 more times, not logged  x.js:1');
 });
 
 test('JSTRACE_OUT moves the logs', async (t) => {

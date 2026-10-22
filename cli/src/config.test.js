@@ -40,6 +40,7 @@ test('mistakes fail with a message naming the field', (t) => {
     ['[]', /must be an object/],
     ['{ "include": "**/*.js" }', /"include" must be an array/],
     ['{ "maxDepth": -1 }', /"maxDepth" must be a whole number/],
+    ['{ "maxRepeat": 1.5 }', /"maxRepeat" must be a whole number/],
     ['{ "maxLines": 10 }', /unknown field "maxLines"/],
   ];
   for (const [text, message] of cases) {

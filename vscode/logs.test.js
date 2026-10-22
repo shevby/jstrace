@@ -83,6 +83,36 @@ test('labels, descriptions and hovers read like the .txt tree', () => {
   assert.match(logs.nodeTooltip(ticks.roots[0], ROOT), /^````json$/m, "a value's backticks can't close the code block");
 });
 
+test('rows group the calls of a function, with those not logged', () => {
+  const call = (/** @type {number} */ id, /** @type {string} */ name, /** @type {number} */ line, /** @type {object} */ more = {}) =>
+    ({ type: 'call', id, parent: 1, depth: 1, name, file: file('a.js'), line, column: 0, args: { id }, ...more });
+  const trace = logs.parseLog(
+    [
+      { type: 'call', id: 1, parent: null, depth: 0, name: 'loop', file: file('a.js'), line: 1, column: 0, args: {} },
+      call(2, 'step', 5), { type: 'return', call: 2, parent: 2, value: 1 },
+      call(3, 'other', 9), { type: 'return', call: 3, parent: 3 },
+      call(4, 'step', 5), { type: 'throw', call: 4, parent: 4, error: '[Error: x]' },
+      call(5, 'step', 5), { type: 'return', call: 5, parent: 5, value: 3 },
+      { type: 'skip', parent: 1, name: 'step', file: file('a.js'), line: 5, column: 0, count: 7 },
+      { type: 'skip', parent: 1, name: 'gone', file: file('a.js'), line: 12, column: 0, count: 1 },
+      { type: 'return', call: 1, parent: 1 },
+    ].map((event) => JSON.stringify(event)).join('\n'),
+  );
+  const loop = trace.roots[0];
+  const describe = (/** @type {import('./logs').Row[]} */ rows) =>
+    rows.map((row) => (row.kind === 'group' ? `${logs.groupLabel(row)} | ${logs.groupDescription(row)}` : row.kind === 'skip' ? logs.skipLabel(row.event) : logs.nodeLabel(/** @type {any} */ (row.node), ROOT)));
+  assert.deepEqual(describe(logs.rows(loop.children, loop.skips, 3)), ['step() ×10 | 7 not logged, 1 threw', 'other(id: 3)', '… gone() ×1 not logged']);
+  assert.deepEqual(logs.rows(loop.children, loop.skips, 3)[0].nodes?.map((node) => node.event.id), [2, 4, 5]);
+  assert.deepEqual(describe(logs.rows(loop.children, [], 4)), ['step(id: 2)', 'other(id: 3)', 'step(id: 4)', 'step(id: 5)'], 'fewer than min');
+  assert.deepEqual(describe(logs.rows(loop.children, loop.skips, 0)), ['step(id: 2)', 'other(id: 3)', 'step(id: 4)', 'step(id: 5)', '… step() ×7 not logged', '… gone() ×1 not logged'], '0: no groups');
+  const [group, , skip] = logs.rows(loop.children, loop.skips, 3);
+  assert.match(logs.rowTooltip(group, ROOT), /called 10 times here[^]*3 logged, 7 not: past `maxRepeat`/);
+  assert.match(logs.rowTooltip(skip, ROOT), /\*\*gone\(\)\*\* called 1 more time here, not logged/);
+  const resumes = { type: 'skip', parent: 1, name: 'loop', file: file('a.js'), line: 1, column: 0, count: 4, resumes: true };
+  assert.equal(logs.skipLabel(resumes), '… loop() resumed ×4 not logged');
+  assert.match(logs.rowTooltip({ kind: 'skip', event: resumes, key: '' }, ROOT), /resumed 4 more times here, not logged/);
+});
+
 test('relativePath keeps a path outside the project as it is', () => {
   assert.equal(logs.relativePath(ROOT, file('a/b.js')), 'a/b.js');
   const outside = path.resolve('/elsewhere/c.js');
