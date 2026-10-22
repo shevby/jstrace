@@ -192,6 +192,19 @@ test('search finds the calls and loads with every word, in names, arguments, val
   assert.deepEqual(logs.highlights('divide(a: 1, b: 0)', 'b: DIV'), [[0, 3], [13, 15]]);
 });
 
+test('steps go through a run in the order it ran, into, over or out of calls, and back', () => {
+  const trace = logs.parseLog(LOG);
+  const node = (/** @type {number} */ id) => /** @type {import('./logs').TraceNode} */ (trace.nodes.get(id));
+  /** @param {number} id @param {'into' | 'back' | 'over' | 'backOver' | 'out'} how */
+  const from = (id, how) => logs.step(trace, node(id), how)?.event.id;
+  // load #1 > main #2 > (divide #3, later #4); ↻ later #5; ids #6
+  assert.deepEqual([from(2, 'into'), from(3, 'into'), from(4, 'into'), from(6, 'into')], [3, 4, 5, undefined], 'into: the next one, whatever it ran in');
+  assert.deepEqual([from(3, 'back'), from(5, 'back'), from(1, 'back')], [2, 4, undefined]);
+  assert.deepEqual([from(1, 'over'), from(2, 'over'), from(3, 'over'), from(4, 'over')], [5, 5, 4, 5], 'over: past what ran inside');
+  assert.deepEqual([from(4, 'backOver'), from(3, 'backOver'), from(5, 'backOver'), from(6, 'backOver')], [3, 2, 1, 5], 'back over: the previous one here, or the caller');
+  assert.deepEqual([from(3, 'out'), from(2, 'out'), from(1, 'out')], [2, 1, undefined], 'out: the caller');
+});
+
 test('readMore reads a log as it grows, a line at a time', (t) => {
   const dir = copyFixture(t, 'app');
   const log = path.join(dir, 'x.jsonl');
