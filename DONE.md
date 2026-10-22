@@ -17,3 +17,10 @@ These are completed roadmap items, moved out of [ROADMAP.md](ROADMAP.md) to keep
   - There's also a `.cjs` file, a `.min.js` file, `lib/esm.js` (which acorn can't parse as a script, and nothing requires), a `greeter` package in `node_modules` that calls back into the app, and `child.js`, forked as a second process.
   - `test/helpers.js` has `copyFixture(t, name)`, which copies a fixture into a temp directory removed after the test, and `APP_OUTPUT`, what the app prints; instrumenting must not change it.
   - `.gitignore` lets the fixtures' `node_modules` in.
+
+## 1. Instrumenter (CLI)
+
+- [x] 1.1 Project and config.
+  - `findProject(cwd)` (`cli/src/project.js`) walks up to the nearest folder with `jstrace.config.json` or `.jstrace/`, else takes the start folder. `relative()` gives project-relative `/` paths, refusing ones outside the project or in `.jstrace/`.
+  - `loadConfig()` (`cli/src/config.js`) creates the file with the defaults when missing, fills in fields left out, and throws a `ConfigError` naming the field for a mistake (bad JSON, wrong type, unknown field).
+  - `cli/src/glob.js` compiles `*`, `?` and `**` into regular expressions. `filter()` tells files to take and folders not worth walking.
