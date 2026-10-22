@@ -22,10 +22,6 @@ Done items are in [DONE.md](DONE.md).
 - [ ] 1.2 File walk and backup: matched files under the targets are copied to `.jstrace/backup/` (paths relative to the project), and `manifest.json` there records a hash of what was written to each, so restore can tell whether a file was edited afterwards.
 - [ ] 1.3 `jstrace restore [target...]`: puts the originals back (all, or those under the targets) and keeps the logs. A file edited since instrumenting is reported, not overwritten.
 - [ ] 1.4 Parsing: acorn, `sourceType: 'script'`, with locations. A file that fails to parse is skipped with a warning naming it and the reason.
-- [ ] 1.5 Function discovery: a hand-written AST walker finds every kind of function (see Architecture) and names it: `foo()`, `Class->method()`, a name from context, or `<anonymous@line:col>`.
-- [ ] 1.6 Injection: enter/exit/return/throw woven in by text insertion, without adding a line. Arrow expression bodies get a block; shebangs and directives keep their places. The output is checked by re-parsing it.
-- [ ] 1.7 Module load events: the prelude registers the file and its functions with `__jt.load()`, which logs the load.
-- [ ] 1.8 Async: `await` (and `yield`) instrumented so a resumed function shows as a new root linked to its call.
 - [ ] 1.9 Instrumenting a file that's instrumented already restores it first, so code is never injected twice. A file that has injected code but no backup (a lost `.jstrace/`) is refused.
 
 ## 2. Runtime (injected prelude)
