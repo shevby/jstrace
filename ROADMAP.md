@@ -21,11 +21,7 @@ All done; see [DONE.md](DONE.md).
 
 ## 2. Runtime (injected prelude)
 
-- [ ] 2.1 The `globalThis.__jt` singleton: one per process. `globalThis.__jstraceFs` or Node's `fs`, the log folder (baked in, or `JSTRACE_OUT`), and the `<startTime>-<pid>` file names.
-- [ ] 2.2 Safe serializer: circular references, functions, class instances (by class name), Buffers and typed arrays, and errors. Limited by `maxDepth`, `maxString`, and `maxLine`.
-- [ ] 2.3 Call tracking and the JSONL event stream (see Architecture for an event's fields).
-- [ ] 2.4 The readable `.txt` tree next to each `.jsonl`.
-- [ ] 2.5 End-to-end tests: instrument the fixtures, run them (child process included), check the logs, and restore. The originals must come back byte for byte.
+All done; see [DONE.md](DONE.md).
 
 ## 3. VSCode extension
 
