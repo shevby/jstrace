@@ -164,6 +164,20 @@ test('a group details each of its calls', () => {
   ]);
 });
 
+test('a call site finds the callee by the name it is written with', () => {
+  assert.deepEqual(
+    ['factorial', 'Cart->add', 'counter.increment', 'Shape->constructor', 'Shape->get scale', 'A->#hidden', '<anonymous@6:42>', 'A->[Symbol.iterator]'].map(logs.callName),
+    ['factorial', 'add', 'increment', 'Shape', 'scale', '#hidden', '', ''],
+  );
+  assert.equal(logs.columnOf("  lines.push(`factorial(5) = ${math.factorial(5)}`);", 'factorial'), 36, 'the call, not the text before it');
+  assert.equal(logs.columnOf('  return n * factorial(n - 1);', 'factorial'), 13);
+  assert.equal(logs.columnOf('  const t = cart.total;', 'total'), 17, 'a getter, through a dot');
+  assert.equal(logs.columnOf('  const s = new Shape(1);', 'Shape'), 16);
+  assert.equal(logs.columnOf('  x.#hidden();', '#hidden'), 4);
+  assert.equal(logs.columnOf('  const factorials = 1; run();', 'factorial'), 2, 'no name there: the first character');
+  assert.equal(logs.columnOf('    items.map(callback);', ''), 4);
+});
+
 test('relativePath keeps a path outside the project as it is', () => {
   assert.equal(logs.relativePath(ROOT, file('a/b.js')), 'a/b.js');
   const outside = path.resolve('/elsewhere/c.js');

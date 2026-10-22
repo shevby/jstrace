@@ -70,6 +70,7 @@
  * @property {number} [maxString]
  * @property {number} [maxLine]
  * @property {number} [maxRepeat]
+ * @property {boolean} [callSites] whether calls log where they were made (on unless `false`)
  */
 
 /**
@@ -106,10 +107,18 @@
  * @returns {Runtime}
  */
 function createRuntime(require, options) {
-  const maxDepth = options.maxDepth ?? 3;
-  const maxString = options.maxString ?? 200;
-  const maxLine = options.maxLine ?? 2000;
-  const maxRepeat = options.maxRepeat ?? 20;
+  /**
+   * An option, or its default when it's left out.
+   * @param {number | undefined} value
+   * @param {number} fallback
+   * @returns {number}
+   */
+  const option = (value, fallback) => (value === undefined || value === null ? fallback : value);
+  const maxDepth = option(options.maxDepth, 3);
+  const maxString = option(options.maxString, 200);
+  const maxLine = option(options.maxLine, 2000);
+  const maxRepeat = option(options.maxRepeat, 20);
+  const callSites = options.callSites !== false;
   const proc = typeof process === 'object' && process ? process : null;
   const folder = (proc && proc.env && proc.env.JSTRACE_OUT) || options.logs || '';
   const root = (options.root || '').replace(/[\\/]+$/, '');
@@ -206,6 +215,39 @@ function createRuntime(require, options) {
   function where(file) {
     const inRoot = root !== '' && file.startsWith(root) && /[\\/]/.test(file.charAt(root.length));
     return (inRoot ? file.slice(root.length + 1) : file).replace(/\\/g, '/');
+  }
+
+  /**
+   * Where the call starting now was made, from a stack trace (V8's format; elsewhere there's
+   * none): the first frame with an absolute path after the called function's own. Frames
+   * without one are skipped: the runtime's (run through `new Function`, so `<anonymous>`),
+   * natives, and Node's internals (`node:internal/…`, or `internal/…` before Node 16). So a
+   * callback run by a function that isn't instrumented (`[].map`) was called from the line
+   * that called that function, and one run by Node itself (a timer) has no site.
+   * @returns {{ file: string, line: number } | null}
+   */
+  function siteOf() {
+    if (!callSites) return null;
+    const limit = Error.stackTraceLimit;
+    /** @type {unknown} */
+    let stack;
+    try {
+      Error.stackTraceLimit = 30;
+      stack = new Error().stack;
+    } catch (_) {
+      return null;
+    } finally {
+      Error.stackTraceLimit = limit;
+    }
+    let callee = false;
+    const lines = String(stack).split('\n');
+    for (let i = 1; i < lines.length; i++) {
+      const frame = /(?:\(|at )([^()]*?):(\d+):\d+\)?\s*$/.exec(lines[i]);
+      if (!frame || !/^(?:[A-Za-z]:[\\/]|\/|\\\\)/.test(frame[1])) continue;
+      if (callee) return { file: frame[1], line: Number(frame[2]) };
+      callee = true;
+    }
+    return null;
   }
 
   /**
@@ -556,6 +598,7 @@ function createRuntime(require, options) {
       /** @type {Record<string, unknown>} the `value` returned or `error` thrown, as logged */
       this.outcome = {};
       if (this.muted) return;
+      const site = siteOf();
       const logged = snapshot((budget) => {
         /** @type {Record<string, unknown>} */
         const result = Object.create(null);
@@ -569,9 +612,9 @@ function createRuntime(require, options) {
         : show(logged);
       const { id, entry } = this;
       write(
-        { type: 'call', id, parent: entry.parent, depth: entry.depth, name, file, line, column, args: logged, time: time() },
+        { type: 'call', id, parent: entry.parent, depth: entry.depth, name, file, line, column, args: logged, ...(site ? { site } : {}), time: time() },
         entry.depth,
-        `${name}(${shown}) #${id}  ${where(file)}:${line}`,
+        `${name}(${shown}) #${id}  ${where(file)}:${line}${site ? `  (from ${where(site.file)}:${site.line})` : ''}`,
       );
     }
 

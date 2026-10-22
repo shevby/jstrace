@@ -21,7 +21,8 @@ async function run(t, source, options = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jstrace-runtime-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const logs = path.join(dir, 'logs');
-  const { code } = instrumentSource(source, { file: path.join(dir, 'x.js'), options: { logs, root: dir, ...options } });
+  // Run through `new Function`, its stack frames have no file, so call sites are tested in a child process.
+  const { code } = instrumentSource(source, { file: path.join(dir, 'x.js'), options: { logs, root: dir, callSites: false, ...options } });
   delete (/** @type {any} */ (globalThis).__jt);
   const module = { exports: /** @type {unknown} */ ({}) };
   new Function('require', 'module', 'exports', code)(require, module, module.exports);
@@ -264,6 +265,42 @@ test('calls skipped at the top level are reported when the process exits', (t) =
   assert.deepEqual(calls.map((event) => event.args.i), [...Array(20).keys(), -1], 'maxRepeat is 20 by default; the callback counts its own');
   assert.deepEqual(stable(log.events.slice(-1)), [{ type: 'skip', parent: null, name: 'f', line: 1, column: 0, count: 5 }]);
   assert.equal(log.tree[log.tree.length - 1], '… f() called 5 more times, not logged  x.js:1');
+});
+
+test('a call site is the first frame from a file after the called function', async (t) => {
+  const stacks = [
+    // Node 12: internals without `node:`, a method called from the top level
+    ['    at Object.exports.f (C:\\projects\\test\\t.js:3:17)', '    at Object.<anonymous> (C:\\projects\\test\\test.js:5:3)',
+      '    at Module._compile (internal/modules/cjs/loader.js:897:30)', '    at internal/main/run_main_module.js:30:11'],
+    // a callback run by a native, with a POSIX path and a frame without a name
+    ['    at /app/lib/x.js:12:24', '    at Array.map (<anonymous>)', '    at /app/lib/x.js:12:16', '    at main (/app/index.js:4:1)'],
+    // a timer callback: nothing but internals after it
+    ['    at Timeout._onTimeout (D:\\app\\x.js:6:66)', '    at listOnTimeout (node:internal/timers:581:17)'],
+  ];
+  /** @type {unknown[]} */
+  const sites = [];
+  const original = Error.prepareStackTrace;
+  t.after(() => {
+    Error.prepareStackTrace = original;
+  });
+  for (const frames of stacks) {
+    // the runtime's own frames come first, as `new Function` code has them
+    const stack = ['Error', '    at siteOf (eval at <anonymous> (D:\\app\\x.js:1:30), <anonymous>:42:9)', '    at new Call (eval at <anonymous> (D:\\app\\x.js:1:30), <anonymous>:300:20)', ...frames].join('\n');
+    Error.prepareStackTrace = () => stack;
+    const { events } = await trace(t, 'function f() {}\nf();', { callSites: true });
+    Error.prepareStackTrace = original;
+    sites.push(events.find((event) => event.type === 'call')?.site);
+  }
+  assert.deepEqual(sites, [{ file: 'C:\\projects\\test\\test.js', line: 5 }, { file: '/app/lib/x.js', line: 12 }, undefined]);
+});
+
+test('the injected code needs nothing newer than Node 12 (ES2019)', () => {
+  const acorn = require('acorn');
+  const { createRuntime } = require('./runtime');
+  acorn.parse(`(${createRuntime})`, { ecmaVersion: 2019 });
+  const source = 'class A { constructor() {} get x() { return 1; } }\nasync function f() { await g(); }\nfunction* g() { yield 1; }\nconst h = (a, { b } = {}) => a;';
+  const { code } = instrumentSource(source, { file: path.join(os.tmpdir(), 'x.js'), options: {} });
+  acorn.parse(code, { ecmaVersion: 2019 });
 });
 
 test('JSTRACE_OUT moves the logs', async (t) => {

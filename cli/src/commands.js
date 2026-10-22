@@ -130,7 +130,7 @@ function instrument(project, targets, cwd, output) {
   }
   const accept = filter(config.include, config.exclude);
   const files = [...new Set(rels.flatMap((rel) => collectFiles(project, rel, accept)))].sort();
-  const options = { logs: project.logs, root: project.dir, maxDepth: config.maxDepth, maxString: config.maxString, maxLine: config.maxLine, maxRepeat: config.maxRepeat };
+  const options = { logs: project.logs, root: project.dir, maxDepth: config.maxDepth, maxString: config.maxString, maxLine: config.maxLine, maxRepeat: config.maxRepeat, callSites: config.callSites };
   const manifest = readManifest(project);
   let done = 0;
   let again = 0;
