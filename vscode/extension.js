@@ -796,6 +796,19 @@ function activate(context) {
       },
     ),
 
+    vscode.commands.registerCommand('jstrace.createMock', async () => {
+      const all = vscode.workspace.workspaceFolders ?? [];
+      const folder = all.length === 1 ? all[0] : await vscode.window.showWorkspaceFolderPick({ placeHolder: 'The project to create a jstrace mock in' });
+      if (!folder) return;
+      await run(folder, ['mock']);
+      try {
+        const config = JSON.parse(fs.readFileSync(path.join(folder.uri.fsPath, 'jstrace.config.json'), 'utf8'));
+        if (config.mock) await vscode.window.showTextDocument(vscode.Uri.file(path.join(folder.uri.fsPath, config.mock)));
+      } catch {
+        // the CLI said what went wrong
+      }
+    }),
+
     vscode.commands.registerCommand('jstrace.restore', async () => {
       const folders = projects().filter((folder) => fs.existsSync(path.join(folder.uri.fsPath, '.jstrace', 'backup')));
       if (folders.length === 0) return void vscode.window.showInformationMessage('jstrace: nothing to restore.');

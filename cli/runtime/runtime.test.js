@@ -360,6 +360,64 @@ test('JSTRACE_OUT moves the logs', async (t) => {
   assert.deepEqual(readLogs(out)[0].tree.slice(1), ['load x.js', 'f() #2  x.js:1', '  ← undefined']);
 });
 
+test('a mock replaces what tracing uses, and one that throws is dropped', async (t) => {
+  /** @type {{ path: string, text: string }[]} */
+  const files = [];
+  /** @type {string[]} */
+  const warnings = [];
+  /** @type {(() => void)[]} */
+  const exits = [];
+  let clock = 100;
+  /** @type {import('./runtime').Mock} */
+  const mock = {
+    fs: {
+      mkdirSync() {},
+      openSync: (file) => files.push({ path: file, text: '' }) - 1,
+      writeSync: (fd, text) => void (files[fd].text += text),
+    },
+    env: (name) => (name === 'JSTRACE_OUT' ? '/mocked/logs' : undefined),
+    pid: () => 7,
+    argv: () => ['node', '/app/main.js', '--fast'],
+    cwd: () => '/app',
+    now: () => (clock += 0.5),
+    date: () => new Date('2026-01-01T00:00:00Z'),
+    site: () => ({ file: '/app/caller.js', line: 3 }),
+    onExit: (listener) => void exits.push(listener),
+    warn: (message) => void warnings.push(message),
+  };
+  /** @type {any} */ (globalThis).__jstraceMock = mock;
+  try {
+    await run(t, 'function f(i) { return i; }\nfunction loop() { for (let i = 0; i < 3; i++) f(i); }\nf(0); f(1); f(2); loop();', { maxRepeat: 2, callSites: true });
+  } finally {
+    delete (/** @type {any} */ (globalThis).__jstraceMock);
+  }
+  assert.deepEqual(files.map((file) => file.path), ['/mocked/logs/2026-01-01T00-00-00.000Z-7.jsonl', '/mocked/logs/2026-01-01T00-00-00.000Z-7.txt']);
+  const events = files[0].text.trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(events[0], { type: 'start', pid: 7, argv: ['node', '/app/main.js', '--fast'], cwd: '/app', started: '2026-01-01T00:00:00.000Z', time: 0 });
+  assert.deepEqual(events.slice(1, 3).map((event) => [event.type, event.time, event.site]), [['load', 0.5, undefined], ['call', 1, { file: '/app/caller.js', line: 3 }]]);
+  assert.equal(exits.length, 1, 'the top level skipped a call of f, logged when the process ends');
+  exits[0]();
+  assert.match(files[1].text, /\n… f\(\) called 1 more time, not logged {2}x\.js:1\n$/);
+  assert.deepEqual(warnings, []);
+
+  /** @type {string[]} */
+  const said = [];
+  /** @type {any} */ (globalThis).__jstraceMock = {
+    fs: mock.fs,
+    pid: () => {
+      throw new Error('no pid here');
+    },
+    warn: (/** @type {string} */ message) => void said.push(message),
+  };
+  try {
+    await run(t, 'function g() {} g();');
+  } finally {
+    delete (/** @type {any} */ (globalThis).__jstraceMock);
+  }
+  assert.deepEqual(said, ["jstrace: the mock's pid() threw, so it's no longer used: no pid here"]);
+  assert.match(files[2].path, new RegExp(`-${process.pid}\\.jsonl$`), 'the usual pid instead');
+});
+
 test('globalThis.__jstraceFs writes the logs when it is set', async (t) => {
   /** @type {string[]} */
   const opened = [];

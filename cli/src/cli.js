@@ -5,12 +5,14 @@
  * as acorn is the only dependency.
  */
 
-const { instrument, restore } = require('./commands');
+const { instrument, restore, createMock } = require('./commands');
 const { findProject } = require('./project');
 
 const USAGE = `Usage:
   jstrace instrument <path...>   inject tracing into the files under the paths
   jstrace restore [path...]      put the original files back (all, or those under the paths)
+  jstrace mock [file]            create a mock of what tracing uses (file writes, clock, …) from
+                                 a template, jstrace.mock.js by default, and name it in the config
   jstrace help                   show this help
 
 The project (where jstrace.config.json and .jstrace/ live) is the current folder, or the
@@ -42,7 +44,7 @@ function main(argv, output = consoleOutput, cwd = process.cwd()) {
     output.out(USAGE);
     return command === undefined ? 2 : 0;
   }
-  if (command !== 'instrument' && command !== 'restore') {
+  if (command !== 'instrument' && command !== 'restore' && command !== 'mock') {
     output.err(`Unknown command: ${command}\n\n${USAGE}`);
     return 2;
   }
@@ -51,7 +53,7 @@ function main(argv, output = consoleOutput, cwd = process.cwd()) {
     return 2;
   }
   const project = findProject(cwd);
-  return (command === 'instrument' ? instrument : restore)(project, args, cwd, output);
+  return (command === 'instrument' ? instrument : command === 'restore' ? restore : createMock)(project, args, cwd, output);
 }
 
 module.exports = { main, USAGE };

@@ -18,6 +18,7 @@ const fs = require('node:fs');
  * @property {number} maxRepeat how many calls of a function a call (or the top level) logs before only counting the rest; 0 for no limit
  * @property {boolean} externalCalls whether calls of functions that aren't traced (built-ins, files not instrumented) are logged too (4.13)
  * @property {string[]} ignoreCalls with `externalCalls`, the callees not to log, as written (`console.*`, `*.push`; `*` for anything)
+ * @property {string} mock a module, relative to the project, with what tracing uses put in its place (4.15); `''` for none
  */
 
 /** @type {Readonly<Config>} */
@@ -35,6 +36,7 @@ const DEFAULTS = Object.freeze({
     'parseInt', 'parseFloat', 'isNaN', '*.push', '*.pop', '*.shift', '*.unshift', '*.call', '*.apply', '*.bind',
     '*.hasOwnProperty', '*.toString', 'setTimeout', 'setInterval', 'setImmediate',
   ],
+  mock: '',
 });
 
 /** A mistake in the config file, with a message for the user. */
@@ -92,6 +94,9 @@ function validate(data, file) {
       if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
         throw new ConfigError(`${file}: "${key}" must be a whole number, 0 or more`);
       }
+      config[key] = value;
+    } else if (key === 'mock') {
+      if (typeof value !== 'string') throw new ConfigError(`${file}: "${key}" must be a path relative to the project, or "" for none`);
       config[key] = value;
     } else if (key === 'callSites' || key === 'externalCalls') {
       if (typeof value !== 'boolean') throw new ConfigError(`${file}: "${key}" must be true or false`);

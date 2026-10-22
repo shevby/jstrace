@@ -84,6 +84,37 @@
  * @property {number} [maxLine]
  * @property {number} [maxRepeat]
  * @property {boolean} [callSites] whether calls log where they were made (on unless `false`)
+ * @property {string} [mock] the absolute path of the config's mock module, if any
+ */
+
+/**
+ * What a program can put in place of what the runtime uses (4.15): to trace where something
+ * is missing (no `fs`, no `process`), to send the logs elsewhere, or to make them the same on
+ * every run. It's `globalThis.__jstraceMock` when that's set before the first instrumented
+ * file runs, else the module the config's `mock` names. Every member is optional, and what's
+ * left out works as usual. A mock's functions run with tracing off, and one that throws is
+ * used no more (with a message), so the program goes on. The runtime reads no files.
+ * @typedef {object} Mock
+ * @property {MockFs} [fs] writes the logs: these are the only file calls the runtime makes
+ * @property {(name: string) => string | undefined} [env] an environment variable (only `JSTRACE_OUT` is read)
+ * @property {() => number} [pid] the process's id, in the log's name and `start` event
+ * @property {() => string[]} [argv] the command line, in the `start` event (shown as the log's label)
+ * @property {() => string | null} [cwd] the working folder, in the `start` event
+ * @property {() => number} [now] a clock in milliseconds, for events' times (only differences count)
+ * @property {() => Date} [date] when the process started, in the log's name and `start` event
+ * @property {() => ({ file: string, line: number } | null)} [site] where the call starting now
+ *   was made (with `callSites` on); `null` for unknown
+ * @property {(listener: () => void) => void} [onExit] calls `listener` once, as the process
+ *   ends: calls skipped at the top level are logged then
+ * @property {(message: string) => void} [warn] tells the user something went wrong, like logs that can't be written
+ */
+
+/**
+ * The file calls the runtime makes, with Node's `fs` signatures.
+ * @typedef {object} MockFs
+ * @property {(path: string, options: { recursive: true }) => unknown} mkdirSync creates the log folder
+ * @property {(path: string, flags: 'a') => number} openSync opens a log to append to, giving its descriptor
+ * @property {(fd: number, text: string) => unknown} writeSync appends text (whole lines) to a log
  */
 
 /**
@@ -133,22 +164,28 @@ function createRuntime(require, options) {
   const maxRepeat = option(options.maxRepeat, 20);
   const callSites = options.callSites !== false;
   const proc = typeof process === 'object' && process ? process : null;
-  const folder = (proc && proc.env && proc.env.JSTRACE_OUT) || options.logs || '';
+  let busy = false;
+  /** @type {Mock} */
+  const mock = findMock();
+  const warn = hook('warn', (/** @type {string} */ message) => console.error(message));
+  const env = hook('env', (/** @type {string} */ name) => (proc && proc.env ? proc.env[name] : undefined));
+  const folder = env('JSTRACE_OUT') || options.logs || '';
   const root = (options.root || '').replace(/[\\/]+$/, '');
-  const pid = proc && proc.pid ? proc.pid : Math.floor(Math.random() * 1e9);
-  const clock = typeof performance === 'object' && typeof performance.now === 'function' ? () => performance.now() : () => Date.now();
+  const pid = hook('pid', () => (proc && proc.pid ? proc.pid : Math.floor(Math.random() * 1e9)))();
+  const clock = hook('now', typeof performance === 'object' && typeof performance.now === 'function' ? () => performance.now() : () => Date.now());
   const origin = clock();
-  const started = new Date();
+  const started = hook('date', () => new Date())();
+  const onExit = hook('onExit', (/** @type {() => void} */ listener) => {
+    if (proc && typeof proc.once === 'function') proc.once('exit', listener);
+  });
+  const site = hook('site', stackSite);
   const separators = new RegExp(`[${String.fromCharCode(0x2028, 0x2029)}]`, 'g');
-  /** @type {any} */
-  const customFs = /** @type {any} */ (globalThis).__jstraceFs;
 
   /** @type {any} */
   let fs = null;
   let jsonl = -1;
   let txt = -1;
   let off = !folder;
-  let busy = false;
   let nextId = 1;
   /** @type {Entry[]} */
   const stack = [];
@@ -157,6 +194,56 @@ function createRuntime(require, options) {
   /** @type {Map<Repeats, EntryCall | null>} those with skipped calls not reported yet, and their call */
   const unreported = new Map();
   let exitHooked = false;
+
+  /**
+   * The program's mock: `globalThis.__jstraceMock`, else the module the config's `mock`
+   * names (`globalThis.__jstraceFs` stands for `{ fs }`, as it did before mocks); else none.
+   * @returns {Mock}
+   */
+  function findMock() {
+    const set = /** @type {any} */ (globalThis).__jstraceMock;
+    if (set) return set;
+    const customFs = /** @type {any} */ (globalThis).__jstraceFs;
+    if (customFs) return { fs: customFs };
+    if (!options.mock) return {};
+    try {
+      return require(options.mock) || {};
+    } catch (error) {
+      console.error(`jstrace: can't load the mock ${options.mock}, so tracing goes on without it: ${error instanceof Error ? error.message : error}`);
+      return {};
+    }
+  }
+
+  /**
+   * What the runtime calls for one of the things a mock can replace: the mock's function,
+   * run with tracing off (it may be instrumented code, or call some), else `fallback`. A
+   * mock's function that throws is used no more, with a message, and `fallback` takes over.
+   * @template {(...args: any[]) => any} F
+   * @param {keyof Mock} name
+   * @param {F} fallback
+   * @returns {F}
+   */
+  function hook(name, fallback) {
+    /** @type {Function | null} */
+    let mocked = typeof mock[name] === 'function' ? /** @type {Function} */ (mock[name]) : null;
+    if (!mocked) return fallback;
+    /** @type {any} */
+    const wrapper = function () {
+      if (!mocked) return fallback.apply(null, /** @type {any} */ (arguments));
+      const was = busy;
+      busy = true;
+      try {
+        return mocked.apply(mock, arguments);
+      } catch (error) {
+        mocked = null;
+        warn(`jstrace: the mock's ${name}() threw, so it's no longer used: ${error instanceof Error ? error.message : error}`);
+        return fallback.apply(null, /** @type {any} */ (arguments));
+      } finally {
+        busy = was;
+      }
+    };
+    return wrapper;
+  }
 
   /**
    * The time since the process's log started, in milliseconds.
@@ -180,14 +267,14 @@ function createRuntime(require, options) {
    * @returns {void}
    */
   function open() {
-    fs = customFs || require('fs');
+    fs = mock.fs || require('fs');
     fs.mkdirSync(folder, { recursive: true });
     const separator = folder.includes('\\') ? '\\' : '/';
     const base = `${folder.replace(/[\\/]+$/, '')}${separator}${started.toISOString().replace(/:/g, '-')}-${pid}`;
     jsonl = fs.openSync(`${base}.jsonl`, 'a');
     txt = fs.openSync(`${base}.txt`, 'a');
-    const argv = proc && Array.isArray(proc.argv) ? proc.argv.map(String) : [];
-    const cwd = proc && typeof proc.cwd === 'function' ? proc.cwd() : null;
+    const argv = hook('argv', () => (proc && Array.isArray(proc.argv) ? proc.argv : []))().map(String);
+    const cwd = hook('cwd', () => (proc && typeof proc.cwd === 'function' ? proc.cwd() : null))();
     fs.writeSync(jsonl, oneLine(JSON.stringify({ type: 'start', pid, argv, cwd, started: started.toISOString(), time: 0 })) + '\n');
     fs.writeSync(txt, oneLine(`jstrace: process ${pid} started ${started.toISOString()}: ${argv.slice(1).join(' ')}`) + '\n');
   }
@@ -211,7 +298,7 @@ function createRuntime(require, options) {
     } catch (error) {
       off = true;
       try {
-        console.error(`jstrace: can't write logs to ${folder}, so tracing stops: ${error instanceof Error ? error.message : error}`);
+        warn(`jstrace: can't write logs to ${folder}, so tracing stops: ${error instanceof Error ? error.message : error}`);
       } catch (_) {
         // nowhere to tell
       }
@@ -236,11 +323,19 @@ function createRuntime(require, options) {
    * without one are skipped: the runtime's (run through `new Function`, so `<anonymous>`),
    * natives, and Node's internals (`node:internal/…`, or `internal/…` before Node 16). So a
    * callback run by a function that isn't instrumented (`[].map`) was called from the line
-   * that called that function, and one run by Node itself (a timer) has no site.
+   * that called that function, and one run by Node itself (a timer) has no site. A mock's
+   * `site` replaces it.
    * @returns {{ file: string, line: number } | null}
    */
   function siteOf() {
-    if (!callSites) return null;
+    return callSites ? site() : null;
+  }
+
+  /**
+   * `siteOf` from `new Error().stack`, unless mocked.
+   * @returns {{ file: string, line: number } | null}
+   */
+  function stackSite() {
     const limit = Error.stackTraceLimit;
     /** @type {unknown} */
     let stack;
@@ -306,9 +401,9 @@ function createRuntime(require, options) {
    */
   function track(repeats, owner) {
     unreported.set(repeats, owner);
-    if (!exitHooked && proc && typeof proc.once === 'function') {
+    if (!exitHooked) {
       exitHooked = true;
-      proc.once('exit', () => unreported.forEach((call, counted) => report(counted, call)));
+      onExit(() => unreported.forEach((call, counted) => report(counted, call)));
     }
   }
 

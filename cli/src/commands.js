@@ -15,6 +15,12 @@ const { filter } = require('./glob');
 const { instrumentSource, isInstrumented } = require('./instrument');
 const { CONFIG_FILE, relative } = require('./project');
 
+/** Where `jstrace mock` puts a mock when it's given no path. */
+const MOCK_FILE = 'jstrace.mock.js';
+
+/** The template of a mock (4.15). */
+const MOCK_TEMPLATE = path.join(__dirname, '..', 'runtime', 'mock-template.js');
+
 /** @typedef {import('./project').Project} Project */
 /** @typedef {import('./cli').Output} Output */
 
@@ -129,8 +135,10 @@ function instrument(project, targets, cwd, output) {
     return 1;
   }
   const accept = filter(config.include, config.exclude);
-  const files = [...new Set(rels.flatMap((rel) => collectFiles(project, rel, accept)))].sort();
-  const options = { logs: project.logs, root: project.dir, maxDepth: config.maxDepth, maxString: config.maxString, maxLine: config.maxLine, maxRepeat: config.maxRepeat, callSites: config.callSites };
+  const mock = config.mock ? path.resolve(project.dir, config.mock) : undefined;
+  // The mock is never instrumented: it's loaded while the runtime is being made.
+  const files = [...new Set(rels.flatMap((rel) => collectFiles(project, rel, accept)))].filter((rel) => path.join(project.dir, rel) !== mock).sort();
+  const options = { logs: project.logs, root: project.dir, maxDepth: config.maxDepth, maxString: config.maxString, maxLine: config.maxLine, maxRepeat: config.maxRepeat, callSites: config.callSites, mock };
   const externalCalls = config.externalCalls ? { ignore: config.ignoreCalls } : undefined;
   const manifest = readManifest(project);
   let done = 0;
@@ -259,4 +267,38 @@ function count(n, noun) {
   return `${n} ${noun}${n === 1 ? '' : 's'}`;
 }
 
-module.exports = { instrument, restore, readManifest };
+/**
+ * `jstrace mock [file]`: creates a mock module from the template (4.15), unless the file is
+ * there already, and names it in the config (created with the defaults when missing), so
+ * tracing loads it once the files are instrumented again.
+ * @param {Project} project
+ * @param {string[]} targets the mock's path, or none for the one the config names, else
+ *   `jstrace.mock.js` in the project
+ * @param {string} cwd what `targets` are relative to
+ * @param {Output} output
+ * @returns {number} the exit code
+ */
+function createMock(project, targets, cwd, output) {
+  try {
+    const { config, created } = loadConfig(project.config);
+    if (created) output.out(`Created ${CONFIG_FILE} with the defaults in ${project.dir}`);
+    const file = targets.length > 0 ? path.resolve(cwd, targets[0]) : path.join(project.dir, config.mock || MOCK_FILE);
+    const rel = relative(project, file);
+    if (!rel) throw new Error(`${targets[0] ?? file}: not a file inside the project (${project.dir})`);
+    const kept = fs.existsSync(file);
+    if (!kept) {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.copyFileSync(MOCK_TEMPLATE, file);
+    }
+    const data = JSON.parse(fs.readFileSync(project.config, 'utf8'));
+    data.mock = rel;
+    fs.writeFileSync(project.config, JSON.stringify(data, null, 2) + '\n');
+    output.out(`${kept ? `Kept ${rel} as it is` : `Created ${rel} from the template`}, and set "mock" to it in ${CONFIG_FILE}. Edit it, then instrument again.`);
+    return 0;
+  } catch (error) {
+    output.err(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+}
+
+module.exports = { instrument, restore, createMock, readManifest, MOCK_FILE };
