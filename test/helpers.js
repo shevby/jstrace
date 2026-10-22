@@ -47,4 +47,29 @@ function copyFixture(t, name) {
   return dir;
 }
 
-module.exports = { FIXTURES, APP_OUTPUT, copyFixture };
+/**
+ * One process's log, as the runtime wrote it.
+ * @typedef {object} Log
+ * @property {string} name the `.jsonl` file's name
+ * @property {Record<string, any>[]} events its events, the `start` header first
+ * @property {string[]} tree the lines of the `.txt` next to it
+ */
+
+/**
+ * Reads the logs in a folder, oldest first.
+ * @param {string} folder
+ * @returns {Log[]}
+ */
+function readLogs(folder) {
+  return fs
+    .readdirSync(folder)
+    .filter((name) => name.endsWith('.jsonl'))
+    .sort()
+    .map((name) => ({
+      name,
+      events: fs.readFileSync(path.join(folder, name), 'utf8').trim().split('\n').map((line) => JSON.parse(line)),
+      tree: fs.readFileSync(path.join(folder, name.replace(/\.jsonl$/, '.txt')), 'utf8').trim().split('\n'),
+    }));
+}
+
+module.exports = { FIXTURES, APP_OUTPUT, copyFixture, readLogs };

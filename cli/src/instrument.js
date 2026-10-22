@@ -141,7 +141,7 @@ function instrumentSource(source, { file, options = {}, runtime = createRuntime 
     }
   });
 
-  const factory = `return (${runtime.toString()})(require, options);`;
+  const factory = `return (${compact(runtime)})(require, options);`;
   const prelude =
     `;var __jt=globalThis.__jt||(globalThis.__jt=new Function("require","options",${literal(factory)})(require,${literal(options)}));` +
     `${MARKER}${literal(file)},${literal(functions)});`;
@@ -151,6 +151,39 @@ function instrumentSource(source, { file, options = {}, runtime = createRuntime 
   const code = apply(source, insertions);
   check(source, code, file);
   return { code, functions };
+}
+
+/** @type {WeakMap<Function, string>} */
+const compacted = new WeakMap();
+
+/**
+ * A function's source without its comments, blank lines and indentation, to keep the
+ * prelude short. Only for code with no multi-line strings or templates, like the runtime.
+ * @param {Function} fn
+ * @returns {string}
+ */
+function compact(fn) {
+  let code = compacted.get(fn);
+  if (code !== undefined) return code;
+  const source = `(${fn.toString()})`;
+  /** @type {acorn.Comment[]} */
+  const comments = [];
+  acorn.parse(source, { ecmaVersion: 'latest', onComment: comments });
+  code = '';
+  let last = 0;
+  for (const { type, start, end } of comments) {
+    // a block comment over lines still ends a line, for automatic semicolons
+    code += source.slice(last, start) + (type === 'Line' ? '' : /[\r\n]/.test(source.slice(start, end)) ? '\n' : ' ');
+    last = end;
+  }
+  code = (code + source.slice(last))
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join('\n')
+    .slice(1, -1);
+  compacted.set(fn, code);
+  return code;
 }
 
 /**

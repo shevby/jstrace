@@ -1,20 +1,25 @@
 'use strict';
 
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { instrumentSource, isInstrumented, parse } = require('./instrument');
 const { APP_OUTPUT, copyFixture } = require('../../test/helpers');
 
+/** Where the runtime logs the code these tests run. */
+const LOGS = fs.mkdtempSync(path.join(os.tmpdir(), 'jstrace-logs-'));
+after(() => fs.rmSync(LOGS, { recursive: true, force: true }));
+
 /**
- * Instruments a source with the pass-through runtime.
+ * Instruments a source with the runtime, logging to a temp folder.
  * @param {string} source
  * @returns {string}
  */
 function instrument(source) {
-  return instrumentSource(source, { file: '/x.js' }).code;
+  return instrumentSource(source, { file: '/x.js', options: { logs: LOGS } }).code;
 }
 
 /**
