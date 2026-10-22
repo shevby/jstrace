@@ -357,7 +357,8 @@ function activate(context) {
         try {
           const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
           const position = document.validatePosition(new vscode.Position(Math.max(0, line - 1), column));
-          await vscode.window.showTextDocument(document, { selection: new vscode.Range(position, position), preserveFocus: true });
+          // The editor takes the focus, since an unfocused one doesn't show its cursor.
+          await vscode.window.showTextDocument(document, { selection: new vscode.Range(position, position) });
         } catch (error) {
           vscode.window.showErrorMessage(`jstrace: can't open ${file}: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -373,8 +374,8 @@ function activate(context) {
       async (element) => {
         const call = element.log.trace.nodes.get(element.node.event.call);
         const event = element.node.event;
+        if (call) await view.reveal(provider.nodeItem(element.log, call), { select: true, focus: false });
         await vscode.commands.executeCommand('jstrace.open', event.file, event.line, event.column);
-        if (call) await view.reveal(provider.nodeItem(element.log, call), { select: true, focus: true });
       },
     ),
 
