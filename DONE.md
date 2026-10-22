@@ -48,3 +48,21 @@ These are completed roadmap items, moved out of [ROADMAP.md](ROADMAP.md) to keep
 - [x] 1.8 Async: `await x` becomes `__jtc.r(await __jtc.sa(x))` and `yield x` becomes `__jtc.r(yield __jtc.sy(x))` (a bare `yield` yields `__jtc.sy()`). `for await` isn't touched.
   - An end-to-end test instruments the app fixture with a recording runtime: it prints the same, and every load, call, return, throw, suspend and resume is recorded, in both processes.
 - [x] 1.9 Instrumenting a file again starts from its backup, so it picks up config changes and never gets code injected twice. A changed one is left alone. One with injected code but no backup (`.jstrace/` lost) is refused.
+
+## 2. Runtime (injected prelude)
+
+- [x] 2.1 The `globalThis.__jt` singleton (`createRuntime` in `cli/runtime/runtime.js`), one per process. It writes with `globalThis.__jstraceFs` or Node's `fs`, to the folder baked in (`options.logs`) or `JSTRACE_OUT`, as `<startTime>-<pid>.jsonl` and `.txt` (the ISO start time, with `-` for `:`).
+  - The files open at the first event, starting with a `start` event (pid, argv, cwd). A failed write stops tracing with one message on stderr; the program goes on.
+  - The instrumenter embeds the runtime without its comments, blank lines and indentation (`compact()` in `instrument.js`, using acorn's comments).
+- [x] 2.2 Safe serializer: JSON, with what JSON can't hold as bracketed strings (`[undefined]`, `[NaN]`, `[10n]`, `[Symbol(s)]`, `[Function f]`, `[class C]`, `[Circular]`, `[Error: msg]`, `[Date …]`, `[RegExp /x/]`, `[Uint8Array(2) 1,2]`, `[ArrayBuffer(4)]`).
+  - A class instance is `{"[Class]": {…}}`, or `"[Class]"` with no own properties (a Promise). Maps and Sets are `{"[Map(n)]": [[k, v], …]}` and `{"[Set(n)]": […]}`.
+  - Getters and setters are named, not called. Serializing runs with tracing off, and a value that throws becomes `[Unserializable]`.
+  - Past `maxDepth`, an object is `[Object]`, `[Array(n)]`, `[Class]`. Strings are cut at `maxString` (`abcde…(+3)`). A value's whole length is kept to roughly `maxLine`: arrays and objects end with `…+N more`.
+- [x] 2.3 Call tracking: a stack of entries (calls and resumes). The events: `start`, `load`, `call`, `return`, `throw`, `yield`, `resume` (see Architecture for the fields).
+  - Each call ends with exactly one `return` or `throw`, logged at `exit` with the value `ret` or `throw` got.
+  - A suspended call that goes on is logged as a resume on top of whatever is running: a new root for an async function, inside the caller of `next()` for a generator.
+  - `sa` turns an awaited promise's rejection into a value that `r` rethrows after logging the resume (one more microtask tick per `await` of a promise). A suspended generator ended by `gen.throw()` or `gen.return()` logs its resume at its next event.
+- [x] 2.4 The `.txt` tree: two spaces per depth. A `start` header line, then `load file`, `name(param: value) #id  file:line`, `← value`, `← throws …`, `← yields …`, `↻ name() #id resumed  file:line`, with paths relative to the project (`options.root`).
+- [x] 2.5 End-to-end tests (`test/e2e.test.js`): instrument the app fixture with the CLI and run it. Both processes' logs are checked: loads, every call ending once, every parent seen before, the factorial chain, a throw, async resumes, yields, a callback from `node_modules`, and the tree's text.
+  - Then restore: every file comes back byte for byte, and the logs stay. `JSTRACE_OUT` is tested too.
+  - Runtime tests (`cli/runtime/runtime.test.js`) run instrumented sources in-process with a fresh runtime. The `same()` tests in `instrument.test.js` now run with the real runtime, logging to a temp folder.
