@@ -22,6 +22,13 @@
  * turns a rejection into a `Rejected` value that `r` rethrows once the resume is logged;
  * that costs an `await` of a promise one more microtask tick. Any other way a suspended call
  * goes on (`gen.throw()`, `gen.return()`) logs its resume at the next thing it reports.
+ *
+ * Repeats (4.1): a call (with its resumes) or the top level logs its first `maxRepeat` calls
+ * of each function, and a call its first `maxRepeat` resumes. Past that, a call or a resume
+ * is muted: it's tracked on the stack like any other, but nothing in it (calls, resumes,
+ * loads, yields) is serialized or written. When the call ends (or the process, for the top
+ * level or a call still running), `skip` events tell how many went unlogged, in its last
+ * logged part, before its return or throw.
  */
 
 /**
@@ -62,14 +69,34 @@
  * @property {number} [maxDepth]
  * @property {number} [maxString]
  * @property {number} [maxLine]
+ * @property {number} [maxRepeat]
+ */
+
+/**
+ * What a call (all its parts) or the top level did past `maxRepeat`, counted.
+ * @typedef {object} Repeats
+ * @property {Map<FunctionInfo, number>} made how many calls of each function it made
+ * @property {Map<FunctionInfo, { file: string, count: number }>} skipped those past `maxRepeat`, not reported yet
+ * @property {number} unlogged its own resumes past `maxRepeat`, not reported yet
  */
 
 /**
  * A node of the call tree on the stack: a call, or a part of one that resumed.
  * @typedef {object} Entry
- * @property {number} id the call's or the resume's id
+ * @property {number} id the call's or the resume's id (0 when muted)
  * @property {number | null} parent the id of the entry it's in
  * @property {number} depth
+ * @property {boolean} muted whether it, and everything in it, goes unlogged
+ * @property {EntryCall} call the call it's (a part of)
+ */
+
+/**
+ * What the runtime needs of a call besides its methods.
+ * @typedef {object} EntryCall
+ * @property {FunctionInfo} info
+ * @property {string} file
+ * @property {Repeats} repeats what it did past `maxRepeat`
+ * @property {Entry} logged its last part that was logged, where its end and skips are shown
  */
 
 /**
@@ -82,6 +109,7 @@ function createRuntime(require, options) {
   const maxDepth = options.maxDepth ?? 3;
   const maxString = options.maxString ?? 200;
   const maxLine = options.maxLine ?? 2000;
+  const maxRepeat = options.maxRepeat ?? 20;
   const proc = typeof process === 'object' && process ? process : null;
   const folder = (proc && proc.env && proc.env.JSTRACE_OUT) || options.logs || '';
   const root = (options.root || '').replace(/[\\/]+$/, '');
@@ -102,6 +130,11 @@ function createRuntime(require, options) {
   let nextId = 1;
   /** @type {Entry[]} */
   const stack = [];
+  /** @type {Repeats} the calls made with nothing running */
+  const topLevel = { made: new Map(), skipped: new Map(), unlogged: 0 };
+  /** @type {Map<Repeats, EntryCall | null>} those with skipped calls not reported yet, and their call */
+  const unreported = new Map();
+  let exitHooked = false;
 
   /**
    * The time since the process's log started, in milliseconds.
@@ -178,13 +211,76 @@ function createRuntime(require, options) {
   /**
    * Pushes an entry on top of whatever is running.
    * @param {number} id
+   * @param {EntryCall} call
+   * @param {boolean} muted
    * @returns {Entry}
    */
-  function push(id) {
+  function push(id, call, muted) {
     const top = stack[stack.length - 1];
-    const entry = { id, parent: top ? top.id : null, depth: top ? top.depth + 1 : 0 };
+    const entry = { id, parent: top ? top.id : null, depth: top ? top.depth + 1 : 0, muted, call };
     stack.push(entry);
     return entry;
+  }
+
+  /**
+   * Counts a call of a function in what's running, telling whether it's past `maxRepeat`
+   * there (and so goes unlogged).
+   * @param {EntryCall | null} owner the call running, `null` for the top level
+   * @param {FunctionInfo} info
+   * @param {string} file
+   * @returns {boolean}
+   */
+  function skip(owner, info, file) {
+    const repeats = owner ? owner.repeats : topLevel;
+    const made = (repeats.made.get(info) || 0) + 1;
+    repeats.made.set(info, made);
+    if (maxRepeat === 0 || made <= maxRepeat) return false;
+    const skipped = repeats.skipped.get(info);
+    if (skipped) skipped.count++;
+    else repeats.skipped.set(info, { file, count: 1 });
+    track(repeats, owner);
+    return true;
+  }
+
+  /**
+   * Keeps what a call (or the top level) skipped to be reported, at the latest when the
+   * process exits.
+   * @param {Repeats} repeats
+   * @param {EntryCall | null} owner
+   * @returns {void}
+   */
+  function track(repeats, owner) {
+    unreported.set(repeats, owner);
+    if (!exitHooked && proc && typeof proc.once === 'function') {
+      exitHooked = true;
+      proc.once('exit', () => unreported.forEach((call, counted) => report(counted, call)));
+    }
+  }
+
+  /**
+   * Logs what went unlogged in a call or the top level: how many calls of each function,
+   * and how many times the call resumed. They're shown in its last logged part.
+   * @param {Repeats} repeats
+   * @param {EntryCall | null} call `null` for the top level
+   * @returns {void}
+   */
+  function report(repeats, call) {
+    if (!unreported.delete(repeats)) return;
+    const entry = call ? call.logged : null;
+    /** @type {[FunctionInfo, string, number, boolean][]} what, where, how many times, and whether resumes */
+    const skips = [];
+    repeats.skipped.forEach(({ file, count }, info) => skips.push([info, file, count, false]));
+    if (call && repeats.unlogged > 0) skips.push([call.info, call.file, repeats.unlogged, true]);
+    skips.forEach(([info, file, count, resumes]) => {
+      const [name, line, column] = info;
+      write(
+        { type: 'skip', parent: entry ? entry.id : null, name, file, line, column, count, ...(resumes ? { resumes } : {}), time: time() },
+        entry ? entry.depth + 1 : 0,
+        `… ${name}() ${resumes ? 'resumed' : 'called'} ${count} more ${count === 1 ? 'time' : 'times'}, not logged  ${where(file)}:${line}`,
+      );
+    });
+    repeats.skipped.clear();
+    repeats.unlogged = 0;
   }
 
   /**
@@ -444,14 +540,22 @@ function createRuntime(require, options) {
      */
     constructor(info, file, args) {
       const [name, line, column, params] = info;
+      const top = stack[stack.length - 1];
       this.info = info;
       this.file = file;
-      this.id = nextId++;
+      /** whether this call, and everything it does, goes unlogged */
+      this.muted = top ? top.muted || skip(top.call, info, file) : skip(null, info, file);
+      this.id = this.muted ? 0 : nextId++;
+      /** @type {Repeats} */
+      this.repeats = { made: new Map(), skipped: new Map(), unlogged: 0 };
       /** the entry of the part of the call that's running (or ran last) */
-      this.entry = push(this.id);
+      this.entry = push(this.id, this, this.muted);
+      this.logged = this.entry;
       this.suspended = false;
+      this.resumed = 0;
       /** @type {Record<string, unknown>} the `value` returned or `error` thrown, as logged */
       this.outcome = {};
+      if (this.muted) return;
       const logged = snapshot((budget) => {
         /** @type {Record<string, unknown>} */
         const result = Object.create(null);
@@ -478,7 +582,7 @@ function createRuntime(require, options) {
      */
     ret(value) {
       this.wake();
-      this.outcome = field('value', value);
+      if (!this.muted) this.outcome = field('value', value);
       return value;
     }
 
@@ -489,18 +593,21 @@ function createRuntime(require, options) {
      */
     throw(error) {
       this.wake();
-      this.outcome = { error: capture(error) };
+      if (!this.muted) this.outcome = { error: capture(error) };
       return error;
     }
 
     /**
-     * Logs how the call ended: a return (of `ret`'s value) or a throw.
+     * Logs how the call ended, in its last logged part: what it didn't log, then a return
+     * (of `ret`'s value) or a throw.
      * @returns {void}
      */
     exit() {
       this.wake();
       pop(this.entry);
-      const { outcome, entry } = this;
+      if (this.muted) return;
+      report(this.repeats, this);
+      const { outcome, logged: entry } = this;
       const threw = 'error' in outcome;
       write(
         { type: threw ? 'throw' : 'return', call: this.id, parent: entry.id, ...outcome, time: time() },
@@ -526,6 +633,10 @@ function createRuntime(require, options) {
      */
     sy(value) {
       this.wake();
+      if (this.entry.muted) {
+        this.suspend();
+        return value;
+      }
       const logged = field('value', value);
       write({ type: 'yield', call: this.id, parent: this.entry.id, ...logged, time: time() }, this.entry.depth + 1, `← yields ${show(logged.value)}`);
       this.suspend();
@@ -552,13 +663,22 @@ function createRuntime(require, options) {
     }
 
     /**
-     * Logs a suspended call resuming, as a part of it on top of whatever is running.
+     * Logs a suspended call resuming, as a part of it on top of whatever is running. Past
+     * `maxRepeat` resumes (an async loop, a long iteration), the part goes unlogged.
      * @returns {void}
      */
     wake() {
       if (!this.suspended) return;
       this.suspended = false;
-      this.entry = push(nextId++);
+      const muted = this.muted || (maxRepeat > 0 && ++this.resumed > maxRepeat);
+      this.entry = push(muted ? 0 : nextId++, this, muted);
+      if (this.muted) return;
+      if (muted) {
+        this.repeats.unlogged++;
+        track(this.repeats, this);
+        return;
+      }
+      this.logged = this.entry;
       const [name, line, column] = this.info;
       const { id, file, entry } = this;
       write(
@@ -573,7 +693,9 @@ function createRuntime(require, options) {
     load(file, functions) {
       const top = stack[stack.length - 1];
       const depth = top ? top.depth + 1 : 0;
-      write({ type: 'load', id: nextId++, parent: top ? top.id : null, depth, file, time: time() }, depth, `load ${where(file)}`);
+      if (!top || !top.muted) {
+        write({ type: 'load', id: nextId++, parent: top ? top.id : null, depth, file, time: time() }, depth, `load ${where(file)}`);
+      }
       return { enter: (index, args) => (off || busy ? NOOP : new Call(functions[index], file, args)) };
     },
   };

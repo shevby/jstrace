@@ -135,7 +135,13 @@
           "type": "string",
           "default": "",
           "scope": "machine-overridable",
-          "markdownDescription": "The `jstrace` CLI: a `.js` script (run with VSCode's own Node) or a program such as `jstrace` on the PATH. A relative path is taken from the workspace folder. Empty uses the `cli/` next to the extension in the jstrace repo, or else `jstrace` on the PATH."
+          "markdownDescription": "The `jstrace` CLI: a `.js` script (run with VSCode's own Node) or a program such as `jstrace` on the PATH. A relative path is taken from the workspace folder. Empty uses the CLI packed in the extension (or the `cli/` beside it in the jstrace repo), or else `jstrace` on the PATH."
+        },
+        "jstrace.groupRepeats": {
+          "type": "integer",
+          "default": 5,
+          "minimum": 0,
+          "markdownDescription": "When a function is called this many times or more under the same call, its calls are grouped into one row (`add() ×12`), where the first one was. The resumes of an async call are grouped the same way. 0 turns grouping off."
         }
       }
     }

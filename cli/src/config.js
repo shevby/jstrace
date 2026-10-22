@@ -14,6 +14,7 @@ const fs = require('node:fs');
  * @property {number} maxDepth how deep arguments and return values are serialized
  * @property {number} maxString how many characters of a string are logged
  * @property {number} maxLine how many characters an event's serialized values may take
+ * @property {number} maxRepeat how many calls of a function a call (or the top level) logs before only counting the rest; 0 for no limit
  */
 
 /** @type {Readonly<Config>} */
@@ -23,6 +24,7 @@ const DEFAULTS = Object.freeze({
   maxDepth: 3,
   maxString: 200,
   maxLine: 2000,
+  maxRepeat: 20,
 });
 
 /** A mistake in the config file, with a message for the user. */
@@ -76,7 +78,7 @@ function validate(data, file) {
         throw new ConfigError(`${file}: "${key}" must be an array of glob strings`);
       }
       config[key] = value;
-    } else if (key === 'maxDepth' || key === 'maxString' || key === 'maxLine') {
+    } else if (key === 'maxDepth' || key === 'maxString' || key === 'maxLine' || key === 'maxRepeat') {
       if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
         throw new ConfigError(`${file}: "${key}" must be a whole number, 0 or more`);
       }

@@ -32,6 +32,8 @@ const { cliCommand, runCli } = require('./cli');
  * @property {string} stamp the file's size and time when it was read, to tell it changed
  * @property {Trace} trace
  * @property {Map<number, NodeItem>} nodes the items made for its nodes, by id
+ * @property {Map<string, RowItem>} rows the items made for its groups and skips, by id
+ * @property {Map<Item, Item>} parents the item each of its items was last listed under
  */
 
 /**
@@ -42,7 +44,25 @@ const { cliCommand, runCli } = require('./cli');
  * @property {TraceNode} node
  */
 
-/** @typedef {ProjectItem | LogItem | NodeItem} Item */
+/**
+ * A group of the calls of a function (or the resumes of a call) under a node, or calls
+ * not logged (see `rows` in `logs.js`).
+ * @typedef {object} RowItem
+ * @property {'group' | 'skip'} kind
+ * @property {string} id
+ * @property {LogItem} log
+ * @property {import('./logs').Row} row
+ */
+
+/** @typedef {ProjectItem | LogItem | NodeItem | RowItem} Item */
+
+/**
+ * How many calls of a function under a node make a group (setting `jstrace.groupRepeats`).
+ * @returns {number} 0 for no groups
+ */
+function groupMin() {
+  return Math.max(0, vscode.workspace.getConfiguration('jstrace').get('groupRepeats', 5));
+}
 
 /**
  * The size and modification time of a file, or `undefined` once it's gone.
@@ -112,21 +132,39 @@ class CallsProvider {
       return folders.map((folder) => this.projectItem(folder));
     }
     if (element.kind === 'project') return this.logsOf(element.folder, element);
-    if (element.kind === 'log') {
-      this.update(element);
-      return element.trace.roots.map((node) => this.nodeItem(element, node));
-    }
-    return element.node.children.map((node) => this.nodeItem(element.log, node));
+    if (element.kind === 'log') this.update(element);
+    const log = element.kind === 'log' ? element : element.log;
+    /** @type {import('./logs').Row[]} */
+    let rows;
+    if (element.kind === 'log') rows = logs.rows(element.trace.roots, element.trace.skips, groupMin());
+    else if (element.kind === 'node') rows = logs.rows(element.node.children, element.node.skips, groupMin());
+    else if (element.kind === 'group') {
+      const { nodes = [], skip, key } = element.row;
+      rows = nodes.map((node) => ({ kind: /** @type {const} */ ('node'), event: node.event, key, node }));
+      if (skip) rows.push({ kind: 'skip', event: skip, key });
+    } else rows = [];
+    const scope = element.kind === 'log' ? 'top' : element.kind === 'node' ? String(element.node.event.id) : element.id;
+    return rows.map((row) => {
+      /** @type {Item} */
+      const item = row.kind === 'node' && row.node ? this.nodeItem(log, row.node) : this.rowItem(log, `${row.kind}:${scope}:${row.key}`, row);
+      log.parents.set(item, element);
+      for (const node of row.kind === 'group' ? row.nodes ?? [] : []) log.parents.set(this.nodeItem(log, node), item);
+      return item;
+    });
   }
 
   /**
+   * The parent of a node is its group, when it's in one, else the node it ran in.
    * @param {Item} element
    * @returns {Item | undefined}
    */
   getParent(element) {
-    if (element.kind === 'node') return element.node.parent ? this.nodeItem(element.log, element.node.parent) : element.log;
+    if (element.kind === 'project') return undefined;
     if (element.kind === 'log') return element.project;
-    return undefined;
+    if (element.kind === 'node' && !element.log.parents.has(element)) {
+      this.getChildren(element.node.parent ? this.nodeItem(element.log, element.node.parent) : element.log);
+    }
+    return element.log.parents.get(element);
   }
 
   /**
@@ -156,9 +194,21 @@ class CallsProvider {
         : file;
       return item;
     }
+    if (element.kind !== 'node') {
+      const { row, log } = element;
+      const event = row.event;
+      const group = element.kind === 'group';
+      const item = new vscode.TreeItem(group ? logs.groupLabel(row) : logs.skipLabel(event), group ? Collapsed : None);
+      item.id = `${log.file}#${element.id}`;
+      item.description = group ? logs.groupDescription(row) : '';
+      item.iconPath = new vscode.ThemeIcon(group ? 'layers' : 'ellipsis');
+      item.contextValue = element.kind;
+      item.command = { title: 'Go to code', command: 'jstrace.open', arguments: [event.file, event.line ?? 1, event.column ?? 0] };
+      return item;
+    }
     const { node, log } = element;
     const event = node.event;
-    const item = new vscode.TreeItem(logs.nodeLabel(node, log.root), node.children.length > 0 ? Collapsed : None);
+    const item = new vscode.TreeItem(logs.nodeLabel(node, log.root), node.children.length + node.skips.length > 0 ? Collapsed : None);
     item.id = `node:${log.file}#${event.id}`;
     item.description = logs.nodeDescription(node);
     const end = event.type === 'call' ? node.outcome ?? node.end : node.end;
@@ -182,7 +232,20 @@ class CallsProvider {
    */
   resolveTreeItem(item, element) {
     if (element.kind === 'node') item.tooltip = new vscode.MarkdownString(logs.nodeTooltip(element.node, element.log.root));
+    if (element.kind === 'group' || element.kind === 'skip') item.tooltip = new vscode.MarkdownString(logs.rowTooltip(element.row, element.log.root));
     return item;
+  }
+
+  /**
+   * Forgets the items made for the logs' trees, so they're grouped again.
+   * @returns {void}
+   */
+  regroup() {
+    for (const log of this.logItems.values()) {
+      log.rows.clear();
+      log.parents.clear();
+    }
+    this.refresh();
   }
 
   /**
@@ -208,7 +271,9 @@ class CallsProvider {
     for (const file of logs.listLogs(logFolder(folder))) {
       let item = this.logItems.get(file);
       if (!item) {
-        item = { kind: 'log', file, root: folder.uri.fsPath, project, stamp: '', trace: logs.parseLog(''), nodes: new Map() };
+        item = {
+          kind: 'log', file, root: folder.uri.fsPath, project, stamp: '', trace: logs.parseLog(''), nodes: new Map(), rows: new Map(), parents: new Map(),
+        };
         this.logItems.set(file, item);
       }
       item.project = project;
@@ -230,7 +295,22 @@ class CallsProvider {
       item.trace = logs.readLog(item.file);
       item.stamp = stamp;
       item.nodes.clear();
+      item.rows.clear();
+      item.parents.clear();
     } catch {}
+  }
+
+  /**
+   * @param {LogItem} log
+   * @param {string} id where it is and what it groups, unique in the log
+   * @param {import('./logs').Row} row a group or a skip
+   * @returns {RowItem}
+   */
+  rowItem(log, id, row) {
+    let item = log.rows.get(id);
+    if (!item) log.rows.set(id, (item = { kind: row.kind === 'group' ? 'group' : 'skip', id, log, row }));
+    item.row = row;
+    return item;
   }
 
   /**
@@ -299,6 +379,9 @@ function activate(context) {
     watcher,
     { dispose: () => clearTimeout(pending) },
     vscode.workspace.onDidChangeWorkspaceFolders(() => provider.refresh()),
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration('jstrace.groupRepeats')) provider.regroup();
+    }),
 
     vscode.commands.registerCommand('jstrace.refresh', () => provider.refresh()),
 

@@ -80,3 +80,10 @@ These are completed roadmap items, moved out of [ROADMAP.md](ROADMAP.md) to keep
 - [x] 3.7 Clicking a `↻ foo() resumed` node selects the call it belongs to, and goes to the function. A call's hover says how many times it resumed.
 - [x] 3.8 Local install: `npm run package` (`vscode/pack.js`, a hand-written zip with no `vsce`) builds `jstrace-vscode-0.1.0.vsix` with the CLI and acorn inside, for `code --install-extension`. A symlink isn't used, since recent VSCode only loads extensions listed in its `extensions.json`.
   - Tests: `vscode/extension.test.js` runs the extension against a fake `vscode` (inject, the tree of a real run, jumping, a resume's call, restore, clear). `pack.test.js` unzips the package and runs the CLI from it. Installing it into a separate extensions folder was checked by hand.
+
+## 4. Later / maybe
+
+- [x] 4.1 Repeats: `maxRepeat` in the config (default 20, 0 for no limit), instead of the proposed cap on events per process. A call (all its parts) or the top level logs its first `maxRepeat` calls of each function, and a call its first `maxRepeat` resumes (async loops, long iterations). Past that, a call or resume is muted: kept on the stack, but nothing in it is serialized or logged.
+  - `skip` events give the counts, in the call's last logged part before its return (`… step() called 3 more times, not logged` in the `.txt`). The top level's, and those of calls still running, are written when the process exits.
+  - Calls aren't found in loops by reading the code: only function bodies are instrumented, and repetition also comes from `.map` callbacks, timers and events, so calls are counted while the program runs.
+- [x] 4.5 Grouping in the tree view (setting `jstrace.groupRepeats`, default 5, 0 for none): under one node, the calls of a function made that many times (or with some skipped) become one row, `step() ×1003` with `3 not logged, 1 threw`, where the first call was. The resumes of a function's calls group the same way (`↻ double() resumed ×6`). A skip without a group is a row of its own. A resume in a group still reveals its call.
