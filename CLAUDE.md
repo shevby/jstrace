@@ -23,7 +23,7 @@ It's a debugging aid, not a product. Keep it small. Slow tracing is fine, and sc
 
 1. **Plain JavaScript, CommonJS** (`require()`, not `import`), with no TypeScript and no build step. Development runs on Node.js 24 LTS. Code must also run on Node 18+.
 2. **[acorn](https://github.com/acornjs/acorn)** is the only third-party runtime dependency, and only the CLI uses it. There's no code generator (astring, escodegen): code is changed by inserting text at acorn's `start`/`end` offsets, using a small hand-written AST walker. Globs are matched by hand too.
-3. **VSCode extension**: plain JS with no bundler, and no dependencies beyond the `vscode` API. Installed locally (a `.vsix`, or a symlink into the extensions folder).
+3. **VSCode extension**: plain JS with no bundler, and no dependencies beyond the `vscode` API. Installed locally from a `.vsix` that `npm run package` (`vscode/pack.js`, a hand-written zip, no `vsce`) builds, with the CLI and acorn packed inside: `code --install-extension jstrace-vscode-0.1.0.vsix`. A symlink into the extensions folder isn't reliable, since recent VSCode only loads extensions listed in its `extensions.json`.
 4. **Dev-only tools** (TypeScript as a checker, `@types/node`, `@types/vscode`) are fine, since they never ship.
 5. **Tests**: the built-in runner (`npm test` → `node --test`). Test files sit next to the code they test as `*.test.js`. Tests work in temp directories and never instrument, restore, or write logs into a real project. They take a fixture with `copyFixture(t, name)` from `test/helpers.js`, never using it in place.
 
@@ -82,9 +82,12 @@ It's a debugging aid, not a product. Keep it small. Slow tracing is fine, and sc
     - `load`, `call`, `resume`: tree nodes with `id`, `parent` (a node id, or `null` for a root), and `depth`. `load` has `file`. `call` has `name`, `file` (absolute), `line`, `column`, and `args` (keyed by parameter name). `resume` has the same, plus `call`, the call it's part of.
     - `return` (`value`, left out for `undefined`), `throw` (`error`), `yield` (`value`): `call`, plus `parent`, the node (the call, or a resume of it) they happened in.
 - **VSCode extension**:
-  - Its own activity-bar container with a tree view: log files (newest first) → call tree. Buttons to refresh, clear logs, and restore. It auto-detects `.jstrace/` in the workspace, with no live tailing.
-  - Clicking a call jumps to the function in the original file. Line numbers are right even while the file is instrumented. The extension's "Restore" brings the original sources back (via the CLI).
-  - Setting `jstrace.cliPath`: the path to the CLI. The explorer's context menu gets "Inject jstrace" on folders and files, which runs `jstrace instrument <it>` in its workspace folder (each folder of a multi-root workspace is a project of its own).
+  - Its own activity-bar container with a tree view, "Calls": projects (only with more than one) → log files (newest first, labeled by the script and arguments from `argv`, with start time and pid) → call tree. Buttons to refresh, clear logs (with a confirmation), and restore. A log's inline button opens its `.txt`.
+  - It auto-detects `.jstrace/` in each workspace folder and watches for logs being added or deleted, but doesn't follow one being written (no live tailing). A log is read again once it changed, when its node is listed or expanded.
+  - A node's label is like the `.txt`'s (`name(param: value)`, `load file`, `↻ name() resumed`). Its description is how it ended: for a call, what it returned or threw in the end, even in a later resume. The hover has the arguments and the value, pretty-printed. A call that threw gets a red icon.
+  - Clicking a call or load jumps to it in the original file. Clicking a resume also selects its call in the tree. Line numbers are right even while the file is instrumented; the column may be off a little.
+  - Setting `jstrace.cliPath`: the CLI, as a `.js` script (run with VSCode's own Node via `ELECTRON_RUN_AS_NODE`) or a program. Empty means the CLI packed in the extension, else the repo's `cli/` beside it, else `jstrace` on the PATH. The explorer's context menu gets "Inject jstrace" on folders and files, which runs `jstrace instrument <them>` in their workspace folder (each folder of a multi-root workspace is a project of its own). Inject and Restore report the CLI's summary, plus what it skipped or left alone (all of it in the "jstrace" output channel).
+  - Code: `logs.js` (parsing and the text shown) and `cli.js` (running the CLI) don't need `vscode`. `extension.test.js` runs the extension against a fake `vscode`.
 
 ## Git Workflow
 

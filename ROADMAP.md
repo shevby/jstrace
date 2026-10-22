@@ -25,17 +25,11 @@ All done; see [DONE.md](DONE.md).
 
 ## 3. VSCode extension
 
-- [ ] 3.1 Manifest and activity-bar container with a tree view: log files (newest first, by process) → call tree, with the args and return value of each call on hover.
-- [ ] 3.2 Jump to code: clicking a call opens the original file at the function.
-- [ ] 3.3 Setting `jstrace.cliPath`, the path to the CLI.
-- [ ] 3.4 "Inject jstrace" in the explorer's context menu (folders and files): runs `jstrace instrument <it>` in its workspace folder.
-- [ ] 3.5 Restore: a button and command running `jstrace restore`, reporting files it left alone.
-- [ ] 3.6 Refresh and clear logs buttons; `.jstrace/` auto-detected in the workspace.
-- [ ] 3.7 Resumed async parts: `↻ foo() resumed` nodes link to the call they belong to.
-- [ ] 3.8 Local install: a `.vsix` or a symlink into the extensions folder, documented.
+All done; see [DONE.md](DONE.md).
 
 ## 4. Later / maybe
 
 - [ ] 4.1 A cap on the number of events per process (`maxCalls` in the config) for runaway loops. *(proposed)*
 - [ ] 4.2 Live tailing: the tree view follows a log as it's written. *(proposed)*
 - [ ] 4.3 Search and filter in the tree view (by function name or file). *(proposed)*
+- [ ] 4.4 Node's own objects in values (a `Timeout` returned by `setTimeout`, its `TimersList`, sockets) shown as just `[Timeout]`, instead of their internal fields filling a whole line. *(proposed)*

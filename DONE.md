@@ -66,3 +66,17 @@ These are completed roadmap items, moved out of [ROADMAP.md](ROADMAP.md) to keep
 - [x] 2.5 End-to-end tests (`test/e2e.test.js`): instrument the app fixture with the CLI and run it. Both processes' logs are checked: loads, every call ending once, every parent seen before, the factorial chain, a throw, async resumes, yields, a callback from `node_modules`, and the tree's text.
   - Then restore: every file comes back byte for byte, and the logs stay. `JSTRACE_OUT` is tested too.
   - Runtime tests (`cli/runtime/runtime.test.js`) run instrumented sources in-process with a fresh runtime. The `same()` tests in `instrument.test.js` now run with the real runtime, logging to a temp folder.
+
+## 3. VSCode extension
+
+- [x] 3.1 Manifest and an activity-bar container with the "Calls" tree view: projects (only with more than one) → log files (newest first, one per process, labeled by script and arguments, with start time and pid) → call tree.
+  - Labels read like the `.txt` tree. A call's description is what it returned or threw in the end, even in a later resume. The hover has the arguments and value, pretty-printed. A call that threw gets a red icon.
+  - `vscode/logs.js` parses the `.jsonl` (skipping a line cut short) and makes the text, with no `vscode` needed.
+- [x] 3.2 Jump to code: clicking a call or load opens the original file at the function (the line is exact even while instrumented; the column may be off a little).
+- [x] 3.3 Setting `jstrace.cliPath`: a `.js` script (run with VSCode's own Node via `ELECTRON_RUN_AS_NODE`) or a program (through `cmd.exe` on Windows, arguments quoted). Empty takes the CLI packed in the extension, else the repo's `cli/` beside it, else `jstrace` on the PATH (`vscode/cli.js`).
+- [x] 3.4 "Inject jstrace" in the explorer's context menu (folders and files, several at once): runs `jstrace instrument <them>` in each one's workspace folder. It reports the CLI's summary and what it skipped; everything goes to the "jstrace" output channel.
+- [x] 3.5 Restore: a view button and command running `jstrace restore` in each project with a backup, reporting files it left alone.
+- [x] 3.6 Refresh and clear logs (with a confirmation) buttons. `.jstrace/` is detected in each workspace folder, and a watcher refreshes the list when logs are added or deleted. A log's inline button opens its `.txt`. A welcome text explains how to start.
+- [x] 3.7 Clicking a `↻ foo() resumed` node selects the call it belongs to, and goes to the function. A call's hover says how many times it resumed.
+- [x] 3.8 Local install: `npm run package` (`vscode/pack.js`, a hand-written zip with no `vsce`) builds `jstrace-vscode-0.1.0.vsix` with the CLI and acorn inside, for `code --install-extension`. A symlink isn't used, since recent VSCode only loads extensions listed in its `extensions.json`.
+  - Tests: `vscode/extension.test.js` runs the extension against a fake `vscode` (inject, the tree of a real run, jumping, a resume's call, restore, clear). `pack.test.js` unzips the package and runs the CLI from it. Installing it into a separate extensions folder was checked by hand.

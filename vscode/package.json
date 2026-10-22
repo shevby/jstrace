@@ -13,7 +13,131 @@
     "vscode": "^1.100.0"
   },
   "activationEvents": [
-    "workspaceContains:**/.jstrace"
+    "workspaceContains:jstrace.config.json",
+    "workspaceContains:.jstrace/logs/*.jsonl"
   ],
-  "contributes": {}
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "jstrace",
+          "title": "jstrace",
+          "icon": "media/jstrace.svg"
+        }
+      ]
+    },
+    "views": {
+      "jstrace": [
+        {
+          "id": "jstrace.calls",
+          "name": "Calls"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "jstrace.calls",
+        "contents": "No jstrace logs yet.\nRight-click a folder or file in the Explorer and choose \"Inject jstrace\", then run your program. Its calls show up here.\n[Refresh](command:jstrace.refresh)"
+      }
+    ],
+    "commands": [
+      {
+        "command": "jstrace.refresh",
+        "title": "Refresh",
+        "category": "jstrace",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "jstrace.clearLogs",
+        "title": "Clear Logs",
+        "category": "jstrace",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "jstrace.restore",
+        "title": "Restore Original Files",
+        "category": "jstrace",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "jstrace.inject",
+        "title": "Inject jstrace",
+        "category": "jstrace"
+      },
+      {
+        "command": "jstrace.openText",
+        "title": "Open as Text",
+        "category": "jstrace",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "jstrace.open",
+        "title": "Go to Code",
+        "category": "jstrace"
+      },
+      {
+        "command": "jstrace.showCall",
+        "title": "Show the Call",
+        "category": "jstrace"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "jstrace.refresh",
+          "when": "view == jstrace.calls",
+          "group": "navigation@1"
+        },
+        {
+          "command": "jstrace.clearLogs",
+          "when": "view == jstrace.calls",
+          "group": "navigation@2"
+        },
+        {
+          "command": "jstrace.restore",
+          "when": "view == jstrace.calls",
+          "group": "navigation@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "jstrace.openText",
+          "when": "view == jstrace.calls && viewItem == log",
+          "group": "inline"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "jstrace.inject",
+          "when": "resourceScheme == file",
+          "group": "7_modification@9"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "jstrace.openText",
+          "when": "false"
+        },
+        {
+          "command": "jstrace.open",
+          "when": "false"
+        },
+        {
+          "command": "jstrace.showCall",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "jstrace",
+      "properties": {
+        "jstrace.cliPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "The `jstrace` CLI: a `.js` script (run with VSCode's own Node) or a program such as `jstrace` on the PATH. A relative path is taken from the workspace folder. Empty uses the `cli/` next to the extension in the jstrace repo, or else `jstrace` on the PATH."
+        }
+      }
+    }
+  }
 }
