@@ -147,7 +147,7 @@ test('the extension injects, shows the call trees, jumps to code, restores and c
   assert.deepEqual([item.label, item.description], ['factorial(n: 5)', '← 120']);
   assert.match(provider.resolveTreeItem(item, factorial).tooltip.value, /Returned:/);
   await fake.commands[item.command.command](...item.command.arguments);
-  assert.deepEqual(JSON.parse(JSON.stringify(fake.opened.pop())), { file: path.join(dir, 'lib', 'math.js'), options: { selection: { start: { line: 6, character: 0 }, end: { line: 6, character: 0 } }, preserveFocus: true } });
+  assert.deepEqual(JSON.parse(JSON.stringify(fake.opened.pop())), { file: path.join(dir, 'lib', 'math.js'), options: { selection: { start: { line: 6, character: 0 }, end: { line: 6, character: 0 } } } }, 'the editor takes the focus, to show its cursor');
 
   const divide = provider.getChildren(calls.find((/** @type {any} */ item) => item.node.event.name === 'safeDivide'))[0];
   assert.equal(provider.getTreeItem(divide).iconPath.id, 'error');
