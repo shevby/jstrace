@@ -43,13 +43,14 @@ It's a debugging aid, not a product. Keep it small. Slow tracing is fine, and sc
 
 ## Glossary
 
-- **Root**: the folder holding `jstrace.config.json`. Instrumenting covers everything below it.
-- **Instrumented**: a root whose files currently contain injected code. Their originals are in `.jstrace/backup/`.
+- **Project**: the folder holding `jstrace.config.json` and `.jstrace/`. In VSCode it's the workspace folder. On the console it's the current directory, or the nearest folder above it that already has either one (as git finds `.git`), so running from a subfolder can't split backups.
+- **Target**: a folder or file passed to `instrument`. It must be inside the project. Any number of targets can be instrumented at once.
+- **Instrumented file**: a file that currently contains injected code. Its original is in `.jstrace/backup/`.
 - **Event**: one line of a log (a call, return, throw, module load, or resume).
 
 ## Architecture
 
-- **Config** (`<root>/jstrace.config.json`) is created with defaults on the first run (by `jstrace instrument`, or by the extension's "Inject jstrace"):
+- **Config** (`<project>/jstrace.config.json`) is created with defaults by the first `instrument` (also when the extension's "Inject jstrace" runs it). Globs are matched against paths relative to the project.
   ```json
   {
     "include": ["**/*.js", "**/*.cjs"],
@@ -61,14 +62,17 @@ It's a debugging aid, not a product. Keep it small. Slow tracing is fine, and sc
   ```
   `node_modules` is *not* excluded by default, since the user's own code can be there.
 - **CLI commands** (the user runs the instrumented program themselves, with no `jstrace run`):
-  - `jstrace instrument <root>`: for each matched file, back up the original to `<root>/.jstrace/backup/<same relative path>` and rewrite the file in place. An already instrumented root is restored first, so code is never injected twice. A file acorn can't parse is skipped with a warning; that covers ESM, TS, JSX, and Flow, which turn up in `node_modules`.
-  - `jstrace restore <root>`: put the originals back. Logs stay. A file changed since it was instrumented isn't overwritten. It's reported instead, so the user's edits aren't lost.
+  - `jstrace instrument <target...>`: for each matched file under the targets (a file named outright is taken regardless of include/exclude), back up the original to `.jstrace/backup/<path relative to the project>` and rewrite the file in place.
+    - `.jstrace/backup/manifest.json` lists the instrumented files with a hash of what was written. This list exists only for restoring; the extension needs nothing but the logs.
+    - A file instrumented already is restored first, so code is never injected twice.
+    - A file acorn can't parse is skipped with a warning; that covers ESM, TS, JSX, and Flow, which turn up in `node_modules`.
+  - `jstrace restore [target...]`: put the originals back, all of them, or those under the targets. Logs stay. A file changed since it was instrumented isn't overwritten. It's reported instead, so the user's edits aren't lost.
 - **What's traced**: every function, including declarations, expressions, arrows, class methods, getters/setters, constructors, async functions, generators, and anonymous callbacks. Also each file's top-level code starting to run (a `load` event). A function in a file that isn't instrumented isn't seen, but a callback it invokes is.
-- **Names**: `foo()`, or `Class->method()` for class members. An anonymous function takes its name from context (`const foo = () => …` gives `foo()`, `obj.x = function () {}` gives `x()`), or else is shown as `<anonymous@line:col>`.
-- **Injection** never adds or removes a line, so line numbers in an instrumented file match the original. Only columns shift. A shebang and `'use strict'` keep their places. A function body is wrapped as enter → `try` → `catch` (logs a throw, rethrows) → `finally` (exit), and each `return x` becomes `return __jt.ret(frame, x)`. Positions logged are always those of the **original** source.
-- **Runtime (the prelude)**: an inline prelude in every instrumented file sets up a shared `globalThis.__jt` singleton, so there's no `require` of a runtime file and no path problems.
+- **Names**: `foo()`, or `Class->method()` for class members (`Class->get x()`, `Class->constructor()`; `Foo.prototype.bar = function` gives `Foo->bar()`). An anonymous function takes its name from context (`const foo = () => …` gives `foo()`, `obj.x = function () {}` gives `obj.x()`, a method in `const obj = { m() {} }` gives `obj.m()`), or else is shown as `<anonymous@line:col>`. The runtime adds the `()`.
+- **Injection** never adds or removes a line, so line numbers in an instrumented file match the original. Only columns shift. A shebang and `'use strict'` keep their places. A function body is wrapped as enter → `try` → `catch` (logs a throw, rethrows) → `finally` (exit), and each `return x` becomes `return __jtc.ret(x)` (`__jtc` is the function's frame). Each `await x` becomes `__jtc.r(await __jtc.sa(x))` and each `yield x` becomes `__jtc.r(yield __jtc.sy(x))`, so the runtime sees a function suspend and resume. Arguments are passed as the values of the identifiers bound by the parameters, since arrows have no `arguments`. Positions logged are always those of the **original** source.
+- **Runtime (the prelude)**: an inline prelude in every instrumented file sets up a shared `globalThis.__jt` singleton, so there's no `require` of a runtime file and no path problems. Its source is `createRuntime` in `cli/runtime/runtime.js`, embedded as a string run through `new Function` (keeping the prelude to one line). Each file then registers itself and its functions' metadata (name, line, column, parameter names) with `__jt.load()`, which logs the load.
   - Writes with synchronous `fs` calls (`mkdirSync`, `openSync`, `writeSync`). It uses `globalThis.__jstraceFs` if that was set before the first instrumented file loaded, and Node's `fs` otherwise.
-  - Log folder: `<root>/.jstrace/logs` (an absolute path baked in at instrument time), overridden by `JSTRACE_OUT` when `process.env` exists.
+  - Log folder: `<project>/.jstrace/logs` (an absolute path baked in at instrument time), overridden by `JSTRACE_OUT` when `process.env` exists.
   - **One instance per process**: each process knows nothing of the others and writes `<startTime>-<pid>.jsonl` (the source of truth) plus `<startTime>-<pid>.txt` (a readable indented tree).
   - Arguments are serialized safely, keyed by parameter name (`foo(): {"a":1,"b":"x"}`). Circular references become `"[Circular]"` and functions `"[Function name]"`. Depth, string length, and line length are limited by `maxDepth`/`maxString`/`maxLine`.
   - **Call trees** follow the synchronous stack. Every `await` is instrumented: when an async function resumes, the rest of it is a new root, `↻ foo() resumed`, carrying the id of the call it belongs to. Callbacks from timers, events, and `.then()` are new roots with no known origin; there's no runtime-agnostic way to tell.
@@ -76,7 +80,7 @@ It's a debugging aid, not a product. Keep it small. Slow tracing is fine, and sc
 - **VSCode extension**:
   - Its own activity-bar container with a tree view: log files (newest first) → call tree. Buttons to refresh, clear logs, and restore. It auto-detects `.jstrace/` in the workspace, with no live tailing.
   - Clicking a call jumps to the function in the original file. Line numbers are right even while the file is instrumented. The extension's "Restore" brings the original sources back (via the CLI).
-  - Setting `jstrace.cliPath`: the path to the CLI. The explorer's folder context menu gets "Inject jstrace", which creates the config there, so that folder becomes the root, and runs `jstrace instrument`.
+  - Setting `jstrace.cliPath`: the path to the CLI. The explorer's context menu gets "Inject jstrace" on folders and files, which runs `jstrace instrument <it>` in its workspace folder (each folder of a multi-root workspace is a project of its own).
 
 ## Git Workflow
 
