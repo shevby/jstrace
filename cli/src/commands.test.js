@@ -149,3 +149,24 @@ test('targets outside the project, missing, or a bad config fail', (t) => {
   assert.equal(code, 1);
   assert.match(err[0], /"include" must be an array/);
 });
+
+test('mock creates a mock from the template and names it in the config; tracing loads it, never instrumented', (t) => {
+  const dir = copyFixture(t, 'app');
+  const { code, out } = run(dir, 'mock');
+  assert.equal(code, 0);
+  assert.deepEqual(out, ['Created jstrace.config.json with the defaults in ' + dir, 'Created jstrace.mock.js from the template, and set "mock" to it in jstrace.config.json. Edit it, then instrument again.']);
+  assert.equal(fs.readFileSync(path.join(dir, 'jstrace.mock.js'), 'utf8'), fs.readFileSync(path.join(__dirname, '..', 'runtime', 'mock-template.js'), 'utf8'));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'jstrace.config.json'), 'utf8')).mock, 'jstrace.mock.js');
+  assert.deepEqual(require(path.join(dir, 'jstrace.mock.js')), {}, 'the template changes nothing until it is edited');
+
+  const elsewhere = path.join(dir, 'mocked-logs');
+  fs.writeFileSync(path.join(dir, 'jstrace.mock.js'), `module.exports = { env: (name) => (name === 'JSTRACE_OUT' ? ${JSON.stringify(elsewhere)} : undefined) };\n`);
+  assert.equal(run(dir, 'instrument', '.').code, 0);
+  assert.ok(!isInstrumented(fs.readFileSync(path.join(dir, 'jstrace.mock.js'), 'utf8')));
+  assert.equal(execFileSync(process.execPath, ['index.js'], { cwd: dir, encoding: 'utf8' }), APP_OUTPUT);
+  assert.equal(fs.readdirSync(elsewhere).filter((name) => name.endsWith('.jsonl')).length, 2, 'both processes logged where the mock said');
+  assert.ok(!fs.existsSync(projectAt(dir).logs));
+
+  assert.match(run(dir, 'mock').out[0], /^Kept jstrace\.mock\.js as it is/);
+  assert.match(run(dir, 'mock', '../outside.js').err[0], /not a file inside the project/);
+});

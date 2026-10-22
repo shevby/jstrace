@@ -321,6 +321,15 @@ test('logs of processes merge into a new one, each call marked with its named pr
   assert.equal(provider.getChildren().length, 4, 'one log picks the others from a list');
 });
 
+test('Create Mock makes one from the template, names it in the config and opens it', async (t) => {
+  const dir = copyFixture(t, 'app');
+  const fake = activate(dir);
+  await fake.commands['jstrace.createMock']();
+  assert.match(fake.messages[0], /^info: Created jstrace\.mock\.js from the template/);
+  assert.equal(fake.opened.pop().file, path.join(dir, 'jstrace.mock.js'));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'jstrace.config.json'), 'utf8')).mock, 'jstrace.mock.js');
+});
+
 test('the tree follows a log as it is written, keeping its items', (t) => {
   const dir = copyFixture(t, 'app');
   const folder = path.join(dir, '.jstrace', 'logs');

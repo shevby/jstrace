@@ -74,6 +74,11 @@
         "category": "jstrace"
       },
       {
+        "command": "jstrace.createMock",
+        "title": "Create Mock",
+        "category": "jstrace"
+      },
+      {
         "command": "jstrace.mergeLogs",
         "title": "Merge Logs…",
         "category": "jstrace",

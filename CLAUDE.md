@@ -40,6 +40,7 @@ It's a debugging aid, not a product. Keep it small. Slow tracing is fine, and sc
 - `vscode/`: the extension (`package.json` is its manifest).
 - `test/fixtures/`: small sample projects (classes, async code, a child process, a `node_modules` package) that tests instrument and run.
 - The root `package.json` is an npm workspace over `cli` and `vscode`, holding the dev tools and the `test`/`typecheck`/`check` scripts.
+- `README.md`: the user's guide (install, commands, the views, config, mocks). Update it with any change a user would notice.
 
 ## Glossary
 
@@ -61,7 +62,8 @@ It's a debugging aid, not a product. Keep it small. Slow tracing is fine, and sc
     "maxRepeat": 20,
     "callSites": true,
     "externalCalls": false,
-    "ignoreCalls": ["require", "console.*", "Math.*", "Object.*", "*.push", "*.call", …]
+    "ignoreCalls": ["require", "console.*", "Math.*", "Object.*", "*.push", "*.call", …],
+    "mock": ""
   }
   ```
   `node_modules` is *not* excluded by default, since the user's own code can be there.
@@ -71,11 +73,13 @@ It's a debugging aid, not a product. Keep it small. Slow tracing is fine, and sc
     - A file instrumented already is restored first, so code is never injected twice.
     - A file acorn can't parse is skipped with a warning; that covers ESM, TS, JSX, and Flow, which turn up in `node_modules`.
   - `jstrace restore [target...]`: put the originals back, all of them, or those under the targets. Logs stay. A file changed since it was instrumented isn't overwritten. It's reported instead, so the user's edits aren't lost.
+  - `jstrace mock [file]`: a mock (see Runtime → Mocks) from the template, `jstrace.mock.js` (or the config's `mock`) by default, kept if it exists, and named in the config.
 - **What's traced**: every function, including declarations, expressions, arrows, class methods, getters/setters, constructors, async functions, generators, and anonymous callbacks. Also each file's top-level code starting to run (a `load` event). A function in a file that isn't instrumented isn't seen, but a callback it invokes is. With `externalCalls` (4.13, off by default), calls made *from* instrumented code to functions that aren't traced (built-ins, files not instrumented) are logged too, as **external calls**, except those whose callee, as written, matches an `ignoreCalls` pattern (`*` for anything; checked at instrument time). Each call expression goes through the runtime by insertions only: `f(a)` → `__jtm.cf(i,f)(a)`, `o.m(a)` → `__jtm.cm(i,o).m(a)` (a proxy, so `this` stays `o`). A function whose source has `__jtm.enter(` is traced and called straight on. Left alone: optional chains, `super`, private methods, direct `eval`, `(o.m)()`, inline functions.
 - **Names**: `foo()`, or `Class->method()` for class members (`Class->get x()`, `Class->constructor()`; `Foo.prototype.bar = function` gives `Foo->bar()`). An anonymous function takes its name from context (`const foo = () => …` gives `foo()`, `obj.x = function () {}` gives `obj.x()`, a method in `const obj = { m() {} }` gives `obj.m()`), or else is shown as `<anonymous@line:col>`. The runtime adds the `()`.
 - **Injection** never adds or removes a line, so line numbers in an instrumented file match the original. Only columns shift. A shebang and `'use strict'` keep their places. A function body is wrapped as enter → `try` → `catch` (logs a throw, rethrows) → `finally` (exit), and each `return x` becomes `return __jtc.ret(x)` (`__jtc` is the function's frame). Each `await x` becomes `__jtc.r(await __jtc.sa(x))` and each `yield x` becomes `__jtc.r(yield __jtc.sy(x))`, so the runtime sees a function suspend and resume. Arguments are passed as the values of the identifiers bound by the parameters, since arrows have no `arguments`. Positions logged are always those of the **original** source.
 - **Runtime (the prelude)**: an inline prelude in every instrumented file sets up a shared `globalThis.__jt` singleton, so there's no `require` of a runtime file and no path problems. Its source is `createRuntime` in `cli/runtime/runtime.js`, stripped of comments and embedded as a string run through `new Function` (keeping the prelude to one line). Each file then registers itself and its functions' metadata (name, line, column, parameter names) with `__jt.load()`, which logs the load.
-  - Writes with synchronous `fs` calls (`mkdirSync`, `openSync`, `writeSync`). It uses `globalThis.__jstraceFs` if that was set before the first instrumented file loaded, and Node's `fs` otherwise. If writing fails, tracing stops with one message on stderr and the program goes on.
+  - Writes with synchronous `fs` calls (`mkdirSync`, `openSync`, `writeSync`), and reads no files. If writing fails, tracing stops with one message on stderr and the program goes on.
+  - **Mocks** (4.15, the `Mock` typedef): everything the runtime takes from its environment (`fs`, `env`, `pid`, `argv`, `cwd`, `now`, `date`, `site`, `onExit`, `warn`) can be replaced by `globalThis.__jstraceMock`, set before the first instrumented file runs, else by the module the config's `mock` names (its absolute path baked into the options; `instrument` never instruments it). `globalThis.__jstraceFs` still stands for `{ fs }`. Each hook runs with `busy` on (tracing off); one that throws is dropped with a `warn`, and the default takes over. `jstrace mock [file]` copies `cli/runtime/mock-template.js` (every hook commented out with an example) and sets `mock`; the extension's "Create Mock" runs it.
   - Log folder: `<project>/.jstrace/logs` (an absolute path baked in at instrument time), overridden by `JSTRACE_OUT` when `process.env` exists.
   - **One instance per process**: each process knows nothing of the others and writes `<startTime>-<pid>.jsonl` (the source of truth; `startTime` is ISO with `-` for `:`) plus `<startTime>-<pid>.txt` (a readable indented tree: `name(param: value) #id  file:line  (from file:line)`, then `← value` or `← throws …`, paths relative to the project).
   - Values are serialized safely as JSON: what JSON can't hold becomes a string in brackets (`"[undefined]"`, `"[Function f]"`, `"[Circular]"`, `"[Error: msg]"`), a class instance `{"[Class]": {…}}`, getters aren't called. Depth, string length, and (roughly) each value's length are limited by `maxDepth`/`maxString`/`maxLine`.
