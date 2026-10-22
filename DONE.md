@@ -24,6 +24,14 @@ These are completed roadmap items, moved out of [ROADMAP.md](ROADMAP.md) to keep
   - `findProject(cwd)` (`cli/src/project.js`) walks up to the nearest folder with `jstrace.config.json` or `.jstrace/`, else takes the start folder. `relative()` gives project-relative `/` paths, refusing ones outside the project or in `.jstrace/`.
   - `loadConfig()` (`cli/src/config.js`) creates the file with the defaults when missing, fills in fields left out, and throws a `ConfigError` naming the field for a mistake (bad JSON, wrong type, unknown field).
   - `cli/src/glob.js` compiles `*`, `?` and `**` into regular expressions. `filter()` tells files to take and folders not worth walking.
+- [x] 1.2 File walk and backup (`cli/src/commands.js`).
+  - `jstrace instrument <path...>` (paths relative to the current folder, inside the project) takes the files under each path that the config's filter takes, or a file named outright whatever the filter says. It doesn't follow symbolic links to folders.
+  - Each original is copied to `.jstrace/backup/<path>`, and `manifest.json` records the SHA-1 of what was written.
+  - Paths add up: instrumenting more keeps what's already instrumented.
+  - It reports a summary on stdout (`Instrumented 7 files, skipped 1`) and each skipped file on stderr. Exit code 1 for a bad config or a path missing or outside the project.
+- [x] 1.3 `jstrace restore [path...]` puts back the originals (all, or those under the paths), removing their backups and empty folders, and the backup folder once nothing's left.
+  - A file changed or deleted since it was instrumented is left alone, its original kept and named in the message.
+- [x] 1.4 Parsing: a file acorn can't parse as a script is skipped with `<path>: skipped, it can't be parsed as a CommonJS script (<acorn's message> (line:col))`.
 - [x] 1.5 Function discovery: `cli/src/walk.js` visits every node with its ancestors, and `cli/src/instrument.js` names each function.
   - Rules: its own name; a class member's `Class->method` (`get`/`set` prefixed, `#private`, `[computed]`); or the name it's given (`const x =`, `a.b =`, `X.prototype.y =` as `X->y`, a default parameter, `obj.method` in `const obj = {…}`).
   - Anything else is `<anonymous@line:col>`, with the column counted from 1.
@@ -39,3 +47,4 @@ These are completed roadmap items, moved out of [ROADMAP.md](ROADMAP.md) to keep
   - The runtime (`cli/runtime/runtime.js`) documents the API instrumented code calls. It passes everything through until milestone 2.
 - [x] 1.8 Async: `await x` becomes `__jtc.r(await __jtc.sa(x))` and `yield x` becomes `__jtc.r(yield __jtc.sy(x))` (a bare `yield` yields `__jtc.sy()`). `for await` isn't touched.
   - An end-to-end test instruments the app fixture with a recording runtime: it prints the same, and every load, call, return, throw, suspend and resume is recorded, in both processes.
+- [x] 1.9 Instrumenting a file again starts from its backup, so it picks up config changes and never gets code injected twice. A changed one is left alone. One with injected code but no backup (`.jstrace/` lost) is refused.

@@ -1,0 +1,151 @@
+'use strict';
+
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const { execFileSync } = require('node:child_process');
+const fs = require('node:fs');
+const path = require('node:path');
+const { main } = require('./cli');
+const { readManifest } = require('./commands');
+const { isInstrumented } = require('./instrument');
+const { projectAt } = require('./project');
+const { APP_OUTPUT, FIXTURES, copyFixture } = require('../../test/helpers');
+
+/** The app fixture's files that the default config instruments. */
+const INSTRUMENTED = [
+  'child.js', 'index.js', 'lib/math.js', 'lib/shapes.js', 'lib/tasks.js', 'lib/util.cjs', 'node_modules/greeter/index.js',
+];
+
+/**
+ * Runs the CLI in a folder and collects what it writes.
+ * @param {string} cwd
+ * @param {...string} argv
+ * @returns {{ code: number, out: string[], err: string[] }}
+ */
+function run(cwd, ...argv) {
+  /** @type {string[]} */
+  const out = [];
+  /** @type {string[]} */
+  const err = [];
+  const code = main(argv, { out: (text) => out.push(text), err: (text) => err.push(text) }, cwd);
+  return { code, out, err };
+}
+
+/**
+ * A file of the app fixture, as it is in `test/fixtures` and as it is in a copy.
+ * @param {string} dir the copy
+ * @param {string} file relative to the app
+ * @returns {{ original: string, current: string }}
+ */
+function file(dir, file) {
+  return {
+    original: fs.readFileSync(path.join(FIXTURES, 'app', file), 'utf8'),
+    current: fs.readFileSync(path.join(dir, file), 'utf8'),
+  };
+}
+
+test('instrument creates the config, backs up and instruments the files, and the app still runs', (t) => {
+  const dir = copyFixture(t, 'app');
+  const { code, out, err } = run(dir, 'instrument', '.');
+  assert.equal(code, 0);
+  assert.deepEqual(out, [`Created jstrace.config.json with the defaults in ${dir}`, 'Instrumented 7 files, skipped 1']);
+  assert.equal(err.length, 1);
+  assert.match(err[0], /^lib\/esm\.js: skipped, it can't be parsed as a CommonJS script \(.*\(4:0\)\)$/);
+
+  assert.deepEqual(Object.keys(readManifest(projectAt(dir)).files), INSTRUMENTED);
+  for (const rel of INSTRUMENTED) {
+    assert.ok(isInstrumented(file(dir, rel).current), rel);
+    assert.equal(fs.readFileSync(path.join(dir, '.jstrace/backup', rel), 'utf8'), file(dir, rel).original, rel);
+  }
+  for (const rel of ['lib/esm.js', 'lib/vendor.min.js']) assert.equal(file(dir, rel).current, file(dir, rel).original, rel);
+  assert.equal(execFileSync(process.execPath, ['index.js'], { cwd: dir, encoding: 'utf8' }), APP_OUTPUT);
+});
+
+test('restore puts every original back and removes the backup', (t) => {
+  const dir = copyFixture(t, 'app');
+  run(dir, 'instrument', '.');
+  const { code, out, err } = run(dir, 'restore');
+  assert.deepEqual([code, out, err], [0, ['Restored 7 files'], []]);
+  for (const rel of INSTRUMENTED) assert.equal(file(dir, rel).current, file(dir, rel).original, rel);
+  assert.ok(!fs.existsSync(path.join(dir, '.jstrace/backup')));
+  assert.ok(fs.existsSync(path.join(dir, 'jstrace.config.json')));
+  assert.deepEqual(run(dir, 'restore').out, ['Nothing to restore']);
+});
+
+test('instrumenting again starts from the originals, and picks up the config', (t) => {
+  const dir = copyFixture(t, 'app');
+  run(dir, 'instrument', 'lib/math.js');
+  const once = file(dir, 'lib/math.js').current;
+  assert.deepEqual(run(dir, 'instrument', 'lib').out, ['Instrumented 4 files (1 of them again), skipped 1']);
+  assert.equal(file(dir, 'lib/math.js').current, once);
+  fs.writeFileSync(path.join(dir, 'jstrace.config.json'), '{ "maxDepth": 7 }');
+  run(dir, 'instrument', 'lib/math.js');
+  assert.match(file(dir, 'lib/math.js').current, /"maxDepth":7/);
+  run(dir, 'restore');
+  assert.equal(file(dir, 'lib/math.js').current, file(dir, 'lib/math.js').original);
+});
+
+test('targets add up, and restore can take some of them', (t) => {
+  const dir = copyFixture(t, 'app');
+  run(dir, 'instrument', 'lib/math.js', 'node_modules/greeter');
+  run(dir, 'instrument', 'child.js');
+  assert.deepEqual(Object.keys(readManifest(projectAt(dir)).files).sort(), ['child.js', 'lib/math.js', 'node_modules/greeter/index.js']);
+  assert.deepEqual(run(dir, 'restore', 'node_modules', 'lib').out, ['Restored 2 files']);
+  assert.deepEqual(Object.keys(readManifest(projectAt(dir)).files), ['child.js']);
+  assert.ok(!fs.existsSync(path.join(dir, '.jstrace/backup/node_modules')));
+});
+
+test('a file named outright is taken whatever the filter says', (t) => {
+  const dir = copyFixture(t, 'app');
+  assert.deepEqual(run(dir, 'instrument', 'lib/vendor.min.js').out.at(-1), 'Instrumented 1 file');
+  assert.ok(isInstrumented(file(dir, 'lib/vendor.min.js').current));
+});
+
+test('a file edited since it was instrumented is left alone', (t) => {
+  const dir = copyFixture(t, 'app');
+  run(dir, 'instrument', 'lib');
+  const math = path.join(dir, 'lib/math.js');
+  fs.appendFileSync(math, '// edited\n');
+  const edited = fs.readFileSync(math, 'utf8');
+
+  const again = run(dir, 'instrument', 'lib/math.js');
+  assert.deepEqual(again.out, ['Instrumented 0 files, skipped 1']);
+  assert.match(again.err[0], /^lib\/math\.js: changed since it was instrumented, so it's left as it is/);
+
+  const { out, err } = run(dir, 'restore');
+  assert.deepEqual(out, ['Restored 3 files, left 1 as they are']);
+  assert.match(err[0], /^lib\/math\.js: changed since it was instrumented.*\.jstrace[\\/]backup[\\/]lib[\\/]math\.js\)$/);
+  assert.equal(fs.readFileSync(math, 'utf8'), edited);
+  assert.deepEqual(Object.keys(readManifest(projectAt(dir)).files), ['lib/math.js']);
+});
+
+test('a file with injected code but no backup is refused', (t) => {
+  const dir = copyFixture(t, 'app');
+  run(dir, 'instrument', 'lib/math.js');
+  fs.rmSync(path.join(dir, '.jstrace'), { recursive: true });
+  const { out, err } = run(dir, 'instrument', 'lib/math.js');
+  assert.deepEqual(out, ['Instrumented 0 files, skipped 1']);
+  assert.deepEqual(err, ["lib/math.js: has injected code but no backup, so it's left as it is"]);
+});
+
+test('paths are relative to the current folder, and the project is found above it', (t) => {
+  const dir = copyFixture(t, 'app');
+  fs.writeFileSync(path.join(dir, 'jstrace.config.json'), '{}');
+  const lib = path.join(dir, 'lib');
+  assert.deepEqual(run(lib, 'instrument', 'math.js').out, ['Instrumented 1 file']);
+  assert.deepEqual(Object.keys(readManifest(projectAt(dir)).files), ['lib/math.js']);
+  assert.ok(!fs.existsSync(path.join(lib, '.jstrace')));
+  assert.deepEqual(run(lib, 'restore', '.').out, ['Restored 1 file']);
+});
+
+test('targets outside the project, missing, or a bad config fail', (t) => {
+  const dir = copyFixture(t, 'app');
+  fs.writeFileSync(path.join(dir, 'jstrace.config.json'), '{}');
+  assert.deepEqual(run(dir, 'instrument', '..').err, [`..: not inside the project (${dir})`]);
+  assert.deepEqual(run(dir, 'instrument', 'nope').err, ['nope: no such file or folder']);
+  assert.equal(run(dir, 'restore', '..').code, 1);
+  fs.writeFileSync(path.join(dir, 'jstrace.config.json'), '{ "include": 1 }');
+  const { code, err } = run(dir, 'instrument', '.');
+  assert.equal(code, 1);
+  assert.match(err[0], /"include" must be an array/);
+});
