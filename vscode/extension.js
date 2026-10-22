@@ -57,6 +57,40 @@ const { cliCommand, runCli } = require('./cli');
 
 /** @typedef {ProjectItem | LogItem | NodeItem | RowItem} Item */
 
+/** The colors of the processes' icons in a merged log, in the order they're listed (not red: that's for a throw). */
+const PROCESS_COLORS = ['charts.blue', 'charts.orange', 'charts.green', 'charts.purple', 'charts.yellow'];
+
+/**
+ * Whether a log is a merged one (4.14).
+ * @param {LogItem} log
+ * @returns {boolean}
+ */
+function isMerged(log) {
+  return Array.isArray(log.trace.start?.merged);
+}
+
+/**
+ * The name given to a log's process, or `''`.
+ * @param {LogItem} log
+ * @returns {string}
+ */
+function nameOf(log) {
+  return logs.readNames(path.dirname(log.file))[path.basename(log.file)] ?? '';
+}
+
+/**
+ * The color of an event's process in a merged log.
+ * @param {LogItem} log
+ * @param {Record<string, any>} event
+ * @returns {vscode.ThemeColor | undefined} none outside a merged log
+ */
+function processColor(log, event) {
+  /** @type {Record<string, any>[] | undefined} */
+  const merged = log.trace.start?.merged;
+  const index = merged ? merged.findIndex((proc) => proc.pid === event.pid && proc.name === event.process) : -1;
+  return index < 0 ? undefined : new vscode.ThemeColor(PROCESS_COLORS[index % PROCESS_COLORS.length]);
+}
+
 /**
  * How many calls of a function under a node make a group (setting `jstrace.groupRepeats`).
  * @returns {number} 0 for no groups
@@ -170,15 +204,18 @@ class CallsProvider {
     }
     if (element.kind === 'log') {
       const { trace, file, root } = element;
-      const item = new vscode.TreeItem(logs.logLabel(trace, file, root), Collapsed);
+      const name = isMerged(element) ? '' : nameOf(element);
+      const item = new vscode.TreeItem(`${name ? `${name} · ` : ''}${logs.logLabel(trace, file, root)}`, Collapsed);
       item.id = `log:${file}`;
       item.description = `${logs.logDescription(trace)}${element.running ? '  running' : ''}`;
-      item.iconPath = new vscode.ThemeIcon(element.running ? 'sync~spin' : 'pulse');
-      item.contextValue = 'log';
+      item.iconPath = new vscode.ThemeIcon(element.running ? 'sync~spin' : isMerged(element) ? 'git-merge' : 'pulse');
+      item.contextValue = isMerged(element) ? 'mergedLog' : 'log';
       const start = trace.start;
-      item.tooltip = start
-        ? `${(start.argv ?? []).join(' ')}\ncwd: ${start.cwd}\nstarted: ${start.started}\n${file}`
-        : file;
+      item.tooltip = !start
+        ? file
+        : isMerged(element)
+          ? `${start.merged.map((/** @type {any} */ proc) => `${proc.name} (pid ${proc.pid}): ${(proc.argv ?? []).join(' ')}`).join('\n')}\n${file}`
+          : `${(start.argv ?? []).join(' ')}\ncwd: ${start.cwd}\nstarted: ${start.started}\n${file}`;
       return item;
     }
     if (element.kind !== 'node') {
@@ -188,7 +225,7 @@ class CallsProvider {
       const item = new vscode.TreeItem(group ? logs.groupLabel(row) : logs.skipLabel(event), group ? Collapsed : None);
       item.id = `${log.file}#${element.id}`;
       item.description = group ? logs.groupDescription(row) : '';
-      item.iconPath = new vscode.ThemeIcon(group ? 'layers' : 'ellipsis');
+      item.iconPath = new vscode.ThemeIcon(group ? 'layers' : 'ellipsis', processColor(log, event));
       item.contextValue = element.kind;
       item.command = { title: 'Go to code', command: 'jstrace.open', arguments: [event.file, event.line ?? 1, event.column ?? 0] };
       return item;
@@ -202,7 +239,10 @@ class CallsProvider {
     item.iconPath =
       end?.type === 'throw'
         ? new vscode.ThemeIcon('error', new vscode.ThemeColor('errorForeground'))
-        : new vscode.ThemeIcon(event.type === 'load' ? 'file-code' : event.type === 'resume' ? 'debug-continue' : event.external ? 'link-external' : 'symbol-function');
+        : new vscode.ThemeIcon(
+            event.type === 'load' ? 'file-code' : event.type === 'resume' ? 'debug-continue' : event.external ? 'link-external' : 'symbol-function',
+            processColor(log, event),
+          );
     // an external call (4.13) is logged where it was made, with no function to go to
     item.contextValue = event.type === 'call' && event.external ? 'external' : event.type === 'call' && event.site ? 'callSite' : event.type;
     item.command =
@@ -496,7 +536,7 @@ const DOUBLE_CLICK = 500;
  */
 function activate(context) {
   const provider = new CallsProvider();
-  const view = vscode.window.createTreeView('jstrace.calls', { treeDataProvider: provider, showCollapseAll: true });
+  const view = vscode.window.createTreeView('jstrace.calls', { treeDataProvider: provider, showCollapseAll: true, canSelectMany: true });
   const search = new SearchProvider(provider);
   const searchView = vscode.window.createTreeView('jstrace.searchResults', { treeDataProvider: search });
   search.view = searchView;
@@ -683,6 +723,78 @@ function activate(context) {
       for (const folder of folders) logs.clearLogs(logFolder(folder));
       provider.refresh();
     }),
+
+    vscode.commands.registerCommand(
+      'jstrace.nameProcess',
+      /**
+       * Names a log's process: its label shows it, and so do its calls once it's merged.
+       * @param {Item} [element] the selected item, from the command palette
+       */
+      async (element = view.selection[0]) => {
+        if (element?.kind !== 'log' || isMerged(element)) return void vscode.window.showInformationMessage('jstrace: select a log in the Calls view to name its process.');
+        const name = await vscode.window.showInputBox({
+          title: 'Name Process',
+          value: nameOf(element) || logs.defaultName(element.trace, element.file),
+          prompt: `The process of ${logs.logLabel(element.trace, element.file, element.root)}: shown in its label, and before each of its calls once it's merged. Empty for none.`,
+        });
+        if (name === undefined) return; // cancelled
+        logs.setName(element.file, name.trim());
+        provider.changed.fire(element);
+      },
+    ),
+
+    vscode.commands.registerCommand(
+      'jstrace.mergeLogs',
+      /**
+       * Merges the logs of processes into a new one (4.14): those selected, or else those
+       * picked from a list. A process that has no name yet is named first.
+       * @param {Item} [element] the item right-clicked
+       * @param {Item[]} [selected] all the items selected with it
+       */
+      async (element, selected) => {
+        /** @param {Item | undefined} item @returns {item is LogItem} */
+        const mergeable = (item) => item?.kind === 'log' && !isMerged(item);
+        let chosen = (selected && selected.length > 0 ? selected : [element]).filter(mergeable);
+        if (chosen.length < 2) {
+          const all = provider.allLogs().filter(mergeable);
+          if (all.length < 2) return void vscode.window.showInformationMessage('jstrace: merging takes two or more logs.');
+          const picks = await vscode.window.showQuickPick(
+            all.map((log) => ({
+              label: `${nameOf(log) ? `${nameOf(log)} · ` : ''}${logs.logLabel(log.trace, log.file, log.root)}`,
+              description: logs.logDescription(log.trace),
+              picked: chosen.includes(log),
+              log,
+            })),
+            { title: 'Merge Logs', placeHolder: 'The processes to merge into one log (two or more)', canPickMany: true },
+          );
+          if (!picks) return; // cancelled
+          chosen = picks.map((pick) => pick.log);
+          if (chosen.length < 2) return void vscode.window.showInformationMessage('jstrace: pick two or more logs to merge.');
+        }
+        for (const log of chosen) {
+          if (nameOf(log)) continue;
+          const name = await vscode.window.showInputBox({
+            title: `Merge Logs: name the process of ${logs.logLabel(log.trace, log.file, log.root)} (${logs.logDescription(log.trace)})`,
+            value: logs.defaultName(log.trace, log.file),
+            prompt: 'Shown before each of its calls in the merged log.',
+          });
+          if (name === undefined) return; // cancelled
+          logs.setName(log.file, name.trim() || logs.defaultName(log.trace, log.file));
+        }
+        const file = path.join(path.dirname(chosen[0].file), `${new Date().toISOString().replace(/:/g, '-')}-merged.jsonl`);
+        try {
+          const sources = chosen.map((log) => ({ file: log.file, text: fs.readFileSync(log.file, 'utf8'), name: nameOf(log) }));
+          const { jsonl, txt } = logs.mergeLogs(sources, chosen[0].root);
+          fs.writeFileSync(logs.textOf(file), txt);
+          fs.writeFileSync(file, jsonl);
+        } catch (error) {
+          return void vscode.window.showErrorMessage(`jstrace: can't merge the logs: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        provider.refresh();
+        const merged = provider.allLogs().find((log) => log.file === file);
+        if (merged) await view.reveal(merged, { select: true, focus: true, expand: true });
+      },
+    ),
 
     vscode.commands.registerCommand('jstrace.restore', async () => {
       const folders = projects().filter((folder) => fs.existsSync(path.join(folder.uri.fsPath, '.jstrace', 'backup')));

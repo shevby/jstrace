@@ -166,7 +166,8 @@ function isRunning(trace, modified, now = Date.now()) {
  */
 function groupKey(event) {
   if (event.type === 'load') return '';
-  return `${event.type === 'resume' || event.resumes ? 'resume:' : ''}${event.file}:${event.line}:${event.column}`;
+  const proc = event.process === undefined ? '' : `${event.pid}:`; // in a merged log, each process's calls apart
+  return `${proc}${event.type === 'resume' || event.resumes ? 'resume:' : ''}${event.file}:${event.line}:${event.column}`;
 }
 
 /**
@@ -250,6 +251,7 @@ function clearLogs(folder) {
     fs.rmSync(file, { force: true });
     fs.rmSync(textOf(file), { force: true });
   }
+  fs.rmSync(path.join(folder, NAMES_FILE), { force: true });
   return logs.length;
 }
 
@@ -290,6 +292,8 @@ function formatValue(value) {
  * @returns {string}
  */
 function logLabel(trace, file, root) {
+  const merged = trace.start?.merged;
+  if (Array.isArray(merged)) return `merged: ${merged.map((proc) => proc.name).join(' + ')}`;
   const argv = trace.start?.argv;
   if (!Array.isArray(argv) || argv.length === 0) return path.basename(file);
   if (argv.length === 1) return path.basename(String(argv[0]));
@@ -309,6 +313,7 @@ function logDescription(trace) {
   const when = isNaN(date.getTime())
     ? String(start.started)
     : `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  if (Array.isArray(start.merged)) return `${when}  pids ${start.merged.map((proc) => proc.pid).join(', ')}`;
   return `${when}  pid ${start.pid}`;
 }
 
@@ -321,10 +326,11 @@ function logDescription(trace) {
  */
 function nodeLabel(node, root) {
   const event = node.event;
-  if (event.type === 'load') return `load ${relativePath(root, event.file)}`;
-  if (event.type === 'resume') return `↻ ${event.name}() resumed`;
+  const prefix = processPrefix(event);
+  if (event.type === 'load') return `${prefix}load ${relativePath(root, event.file)}`;
+  if (event.type === 'resume') return `${prefix}↻ ${event.name}() resumed`;
   const label = `${event.name}(${argsText(event)})`;
-  return label.length > MAX_LABEL ? `${label.slice(0, MAX_LABEL - 2)}…)` : label;
+  return prefix + (label.length > MAX_LABEL ? `${label.slice(0, MAX_LABEL - 2)}…)` : label);
 }
 
 /**
@@ -418,7 +424,8 @@ function nodeTooltip(node, root) {
  */
 function groupLabel(row) {
   const count = (row.nodes?.length ?? 0) + (row.skip?.count ?? 0);
-  return row.event.type === 'resume' ? `↻ ${row.event.name}() resumed ×${count}` : `${row.event.name}() ×${count}`;
+  const prefix = processPrefix(row.event);
+  return row.event.type === 'resume' ? `${prefix}↻ ${row.event.name}() resumed ×${count}` : `${prefix}${row.event.name}() ×${count}`;
 }
 
 /**
@@ -437,7 +444,7 @@ function groupDescription(row) {
  * @returns {string}
  */
 function skipLabel(event) {
-  return `… ${event.name}()${event.resumes ? ' resumed' : ''} ×${event.count} not logged`;
+  return `${processPrefix(event)}… ${event.name}()${event.resumes ? ' resumed' : ''} ×${event.count} not logged`;
 }
 
 /**
@@ -515,8 +522,8 @@ function searchWords(query) {
  */
 function searchText(node, root) {
   const event = node.event;
-  if (event.type === 'load') return `load ${relativePath(root, event.file)}`;
-  return `${event.name}(${argsText(event)})  ${nodeDescription(node)}  ${relativePath(root, event.file)}:${event.line}`;
+  if (event.type === 'load') return `${processPrefix(event)}load ${relativePath(root, event.file)}`;
+  return `${processPrefix(event)}${event.name}(${argsText(event)})  ${nodeDescription(node)}  ${relativePath(root, event.file)}:${event.line}`;
 }
 
 /**
@@ -698,7 +705,158 @@ function groupDetails(row, root) {
   return { name: fileName(`${event.name} ×${nodes.length + (row.skip?.count ?? 0)}.jsonc`), text: `${lines.join('\n')}\n${JSON.stringify(items, null, 2)}\n` };
 }
 
+/** The file in a log folder that names the processes of its logs (so clearing logs clears it). */
+const NAMES_FILE = 'names.json';
+
+/**
+ * The names given to the processes of a folder's logs.
+ * @param {string} folder the log folder
+ * @returns {Record<string, string>} by the log's file name
+ */
+function readNames(folder) {
+  try {
+    const names = JSON.parse(fs.readFileSync(path.join(folder, NAMES_FILE), 'utf8'));
+    return names !== null && typeof names === 'object' && !Array.isArray(names) ? names : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Names a log's process, or takes its name away.
+ * @param {string} file the `.jsonl` file
+ * @param {string} name `''` for none
+ * @returns {void}
+ */
+function setName(file, name) {
+  const folder = path.dirname(file);
+  const names = readNames(folder);
+  if (name) names[path.basename(file)] = name;
+  else delete names[path.basename(file)];
+  fs.writeFileSync(path.join(folder, NAMES_FILE), JSON.stringify(names, null, 2) + '\n');
+}
+
+/**
+ * The name a process gets when it's merged before it was named: its script's, without the
+ * extension (`server` for `node server.js`).
+ * @param {Trace} trace
+ * @param {string} file the `.jsonl` file
+ * @returns {string}
+ */
+function defaultName(trace, file) {
+  const argv = trace.start?.argv;
+  const script = Array.isArray(argv) && argv.length > 1 ? String(argv[1]) : file;
+  return path.basename(script).replace(/\.[^.]*$/, '') || 'process';
+}
+
+/**
+ * Where an event is shown as being from in a merged log: `server 1234 › `; `''` elsewhere.
+ * @param {Record<string, any>} event
+ * @returns {string}
+ */
+function processPrefix(event) {
+  return event.process === undefined ? '' : `${event.process} ${event.pid} › `;
+}
+
+/**
+ * One process's log, to merge.
+ * @typedef {object} MergeSource
+ * @property {string} file its `.jsonl` file
+ * @property {string} text its content
+ * @property {string} name its process's name
+ */
+
+/**
+ * Merges the logs of processes into one, as if one process wrote it all (4.14): their
+ * events in the order they happened (each one's `started` plus its `time`; as close as the
+ * processes' clocks agree, within a millisecond on one machine), node ids renumbered in
+ * that order, and each event marked with its process's `pid` and name (`process`). Each
+ * process's call trees stay as they were; only its roots interleave with the others'. The
+ * `start` event lists the processes (`merged`) and has no `pid` of its own. The `.txt` has
+ * the lines the runtime would have written, each after its process's name and pid.
+ * @param {MergeSource[]} sources
+ * @param {string} root the project folder, which the `.txt` shows paths relative to
+ * @returns {{ jsonl: string, txt: string }}
+ * @throws {Error} for a log with no `start` event (empty)
+ */
+function mergeLogs(sources, root) {
+  /** @type {Record<string, any>[]} */
+  const processes = [];
+  /** @type {{ event: Record<string, any>, index: number, at: number }[]} */
+  const all = [];
+  sources.forEach((source, index) => {
+    const events = source.text.split('\n').flatMap((line) => {
+      try {
+        const event = JSON.parse(line);
+        return event !== null && typeof event === 'object' ? [event] : [];
+      } catch {
+        return []; // one being written
+      }
+    });
+    const start = events.find((event) => event.type === 'start');
+    const began = Date.parse(start?.started);
+    if (!start || isNaN(began)) throw new Error(`${path.basename(source.file)} has no start, so it can't be merged`);
+    processes.push({ name: source.name, pid: start.pid, argv: start.argv, cwd: start.cwd, started: start.started, file: path.basename(source.file) });
+    for (const event of events) if (event.type !== 'start') all.push({ event, index, at: began + (Number(event.time) || 0) });
+  });
+  all.sort((a, b) => a.at - b.at); // stable, so each process's events keep their order
+  const origin = Math.min(...processes.map((proc) => Date.parse(proc.started)));
+
+  /** @type {Map<string, number>} the new id of each process's node id, as `index:id` */
+  const ids = new Map();
+  /** @type {Map<number, number>} each node's depth, by new id */
+  const depths = new Map();
+  let next = 1;
+  /** @param {number} index @param {unknown} id */
+  const renumber = (index, id) => (typeof id === 'number' ? ids.get(`${index}:${id}`) ?? null : id);
+  const width = Math.max(...processes.map((proc) => `${proc.name} ${proc.pid}`.length));
+  const jsonl = [JSON.stringify({ type: 'start', merged: processes, started: new Date(origin).toISOString(), time: 0 })];
+  const txt = [`jstrace: ${processes.length} processes merged: ${processes.map((proc) => `${proc.name} (pid ${proc.pid})`).join(', ')}`];
+  for (const { event: original, index, at } of all) {
+    const proc = processes[index];
+    const event = { ...original };
+    if (event.type === 'load' || event.type === 'call' || event.type === 'resume') ids.set(`${index}:${event.id}`, next++);
+    for (const key of ['id', 'parent', 'call']) if (key in event) event[key] = renumber(index, event[key]);
+    if (typeof event.id === 'number') depths.set(event.id, Number(event.depth) || 0);
+    event.time = Math.round((at - origin) * 1000) / 1000;
+    const merged = { type: event.type, pid: proc.pid, process: proc.name, ...event };
+    jsonl.push(JSON.stringify(merged));
+    const depth = typeof event.id === 'number' ? depths.get(event.id) ?? 0 : event.parent === null ? 0 : (depths.get(event.parent) ?? -1) + 1;
+    txt.push(`${`${proc.name} ${proc.pid}`.padEnd(width)} │ ${'  '.repeat(depth)}${textLine(merged, root)}`);
+  }
+  return { jsonl: jsonl.join('\n') + '\n', txt: txt.join('\n') + '\n' };
+}
+
+/**
+ * An event as the runtime writes it in the `.txt` tree, without the indentation.
+ * @param {Record<string, any>} event
+ * @param {string} root the project folder
+ * @returns {string}
+ */
+function textLine(event, root) {
+  const where = (/** @type {string} */ file) => relativePath(root, file);
+  switch (event.type) {
+    case 'load':
+      return `load ${where(event.file)}`;
+    case 'call': {
+      const from = event.external ? '  (not traced)' : event.site ? `  (from ${where(event.site.file)}:${event.site.line})` : '';
+      return `${event.name}(${argsText(event)}) #${event.id}  ${where(event.file)}:${event.line}${from}`;
+    }
+    case 'resume':
+      return `↻ ${event.name}() #${event.call} resumed  ${where(event.file)}:${event.line}`;
+    case 'skip':
+      return `… ${event.name}() ${event.resumes ? 'resumed' : 'called'} ${event.count} more ${event.count === 1 ? 'time' : 'times'}, not logged  ${where(event.file)}:${event.line}`;
+    default:
+      return formatEnd(event);
+  }
+}
+
 module.exports = {
+  readNames,
+  setName,
+  defaultName,
+  processPrefix,
+  mergeLogs,
   parseLog,
   readMore,
   isRunning,
