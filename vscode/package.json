@@ -165,6 +165,11 @@
         "command": "jstrace.openResult",
         "title": "Open Search Result",
         "category": "jstrace"
+      },
+      {
+        "command": "jstrace.showStep",
+        "title": "Show Call",
+        "category": "jstrace"
       }
     ],
     "menus": {
@@ -279,6 +284,10 @@
         },
         {
           "command": "jstrace.openResult",
+          "when": "false"
+        },
+        {
+          "command": "jstrace.showStep",
           "when": "false"
         }
       ],
