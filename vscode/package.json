@@ -95,7 +95,7 @@
         "command": "jstrace.goToSite",
         "title": "Go to Call Site",
         "category": "jstrace",
-        "icon": "$(call-incoming)"
+        "icon": "$(arrow-right)"
       },
       {
         "command": "jstrace.goToFunction",
@@ -209,7 +209,7 @@
         {
           "command": "jstrace.showInTree",
           "when": "view == jstrace.searchResults && viewItem =~ /^(call|callSite|load)$/",
-          "group": "inline"
+          "group": "inline@0"
         },
         {
           "command": "jstrace.showInTree",
@@ -224,12 +224,17 @@
         {
           "command": "jstrace.showDetails",
           "when": "view =~ /^jstrace[.](calls|searchResults)$/ && viewItem =~ /^(call|callSite|resume|load|group)$/",
-          "group": "inline"
+          "group": "inline@2"
         },
         {
           "command": "jstrace.goToFunction",
           "when": "view =~ /^jstrace[.](calls|searchResults)$/ && viewItem =~ /^(call|callSite)$/",
-          "group": "inline"
+          "group": "inline@1"
+        },
+        {
+          "command": "jstrace.goToSite",
+          "when": "view =~ /^jstrace[.](calls|searchResults)$/ && viewItem =~ /^(call|callSite|load)$/",
+          "group": "inline@3"
         },
         {
           "command": "jstrace.goToSite",
