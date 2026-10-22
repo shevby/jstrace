@@ -1,0 +1,6 @@
+{
+  "name": "fixture-app",
+  "private": true,
+  "type": "commonjs",
+  "main": "index.js"
+}
