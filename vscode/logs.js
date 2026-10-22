@@ -56,6 +56,17 @@ const MAX_LABEL = 120;
 function parseLog(text) {
   /** @type {Trace} */
   const trace = { start: undefined, roots: [], skips: [], nodes: new Map() };
+  appendLog(trace, text);
+  return trace;
+}
+
+/**
+ * Adds more of a log to its call trees, as `parseLog` builds them.
+ * @param {Trace} trace
+ * @param {string} text lines that follow those read already
+ * @returns {void}
+ */
+function appendLog(trace, text) {
   for (const line of text.split('\n')) {
     /** @type {Record<string, any>} */
     let event;
@@ -87,7 +98,62 @@ function parseLog(text) {
       (node ? node.skips : trace.skips).push(event);
     }
   }
-  return trace;
+}
+
+/**
+ * A log read so far: its trees, and how many bytes of it they hold.
+ * @typedef {object} Tail
+ * @property {Trace} trace
+ * @property {number} offset where the next read starts: after the last complete line read
+ */
+
+/**
+ * Reads what was added to a log since the last read, up to its last complete line (one the
+ * program is still writing waits for the next read). A log that got shorter is read again
+ * from the start, into a new trace.
+ * @param {string} file the `.jsonl` file
+ * @param {Tail} tail updated in place
+ * @returns {boolean} whether anything was read
+ * @throws when the file can't be read (it's gone)
+ */
+function readMore(file, tail) {
+  const size = fs.statSync(file).size;
+  if (size < tail.offset) {
+    tail.trace = parseLog('');
+    tail.offset = 0;
+  }
+  if (size === tail.offset) return false;
+  const fd = fs.openSync(file, 'r');
+  try {
+    const buffer = Buffer.alloc(size - tail.offset);
+    const read = fs.readSync(fd, buffer, 0, buffer.length, tail.offset);
+    const end = buffer.lastIndexOf(10, read - 1); // the last '\n', so a character is never cut in two
+    if (end < 0) return false;
+    appendLog(tail.trace, buffer.toString('utf8', 0, end + 1));
+    tail.offset += end + 1;
+    return true;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * Whether a log's process still runs: one with its pid exists, and the log changed lately
+ * (so an old log whose pid was taken by another process doesn't look alive for long).
+ * @param {Trace} trace
+ * @param {number} modified when the log last changed, in ms since the epoch
+ * @param {number} [now]
+ * @returns {boolean}
+ */
+function isRunning(trace, modified, now = Date.now()) {
+  const pid = trace.start?.pid;
+  if (typeof pid !== 'number' || now - modified > 30 * 60 * 1000) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return /** @type {NodeJS.ErrnoException} */ (error).code === 'EPERM'; // it exists, but isn't ours to signal
+  }
 }
 
 /**
@@ -523,6 +589,8 @@ function groupDetails(row, root) {
 
 module.exports = {
   parseLog,
+  readMore,
+  isRunning,
   callName,
   columnOf,
   nodeDetails,
