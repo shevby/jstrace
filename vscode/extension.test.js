@@ -22,6 +22,8 @@ function fakeVscode(dir) {
   const views = {};
   /** @type {(string | undefined)[]} what the input boxes will be answered */
   const inputs = [];
+  /** @type {(string[] | undefined)[]} the labels the quick picks will be answered with */
+  const picks = [];
   /** @type {any[][]} the decorations set, last first */
   const decorations = [];
   /** @type {string[]} */
@@ -62,12 +64,17 @@ function fakeVscode(dir) {
     },
     TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
     ThemeIcon: class {
+      /** @param {string} id @param {any} [color] */
+      constructor(id, color) {
+        Object.assign(this, { id, color });
+      }
+    },
+    ThemeColor: class {
       /** @param {string} id */
       constructor(id) {
         this.id = id;
       }
     },
-    ThemeColor: class {},
     MarkdownString: class {
       /** @param {string} value */
       constructor(value) {
@@ -106,6 +113,10 @@ function fakeVscode(dir) {
       onDidChangeTextEditorSelection: () => ({ dispose() {} }),
       setStatusBarMessage: (/** @type {string} */ text) => void status.push(text),
       showInputBox: async () => inputs.shift(),
+      showQuickPick: async (/** @type {any[]} */ items) => {
+        const labels = picks.shift();
+        return labels && items.filter((item) => labels.includes(item.label));
+      },
       withProgress: (/** @type {any} */ options, /** @type {() => Promise<void>} */ task) => task(),
       createOutputChannel: () => ({ append() {}, appendLine() {}, show() {}, dispose() {} }),
       showInformationMessage: message('info'),
@@ -148,7 +159,7 @@ function fakeVscode(dir) {
       executeCommand: (/** @type {string} */ name, /** @type {any[]} */ ...args) => commands[name]?.(...args), // and the views' own
     },
   };
-  return { vscode, commands, messages, revealed, opened, inputs, views, decorations, status, provider: () => views['jstrace.calls'].provider };
+  return { vscode, commands, messages, revealed, opened, inputs, picks, views, decorations, status, provider: () => views['jstrace.calls'].provider };
 }
 
 /**
@@ -271,6 +282,43 @@ test('with externalCalls, calls of functions that are not traced show where they
   await fake.commands[item.command.command](...item.command.arguments);
   const line = fs.readFileSync(path.join(dir, '.jstrace', 'backup', 'index.js'), 'utf8').split('\n')[36];
   assert.deepEqual(JSON.parse(JSON.stringify(fake.opened.pop().options.selection.start)), { line: 36, character: line.indexOf('sort(') }, 'on the callee, as in the original');
+});
+
+test('logs of processes merge into a new one, each call marked with its named process', async (t) => {
+  const dir = copyFixture(t, 'app');
+  const fake = activate(dir);
+  const provider = fake.provider();
+  await fake.commands['jstrace.inject']({ fsPath: dir, scheme: 'file' }, [{ fsPath: dir, scheme: 'file' }]);
+  execFileSync(process.execPath, ['index.js'], { cwd: dir });
+  const [child, app] = provider.getChildren();
+
+  fake.inputs.push('server');
+  await fake.commands['jstrace.nameProcess'](app);
+  assert.equal(provider.getTreeItem(app).label, 'server · index.js', 'a named process shows its name');
+
+  fake.inputs.push(''); // the child's name: its script's
+  await fake.commands['jstrace.mergeLogs'](app, [app, child]);
+  const [merged, ...rest] = provider.getChildren();
+  assert.equal(rest.length, 2, 'the logs merged stay');
+  const item = provider.getTreeItem(merged);
+  assert.deepEqual([item.label, item.contextValue, item.iconPath.id], ['merged: server + child', 'mergedLog', 'git-merge']);
+  assert.match(item.description, /  pids \d+, \d+$/);
+  assert.deepEqual(fake.revealed, [merged], 'shown once made');
+  assert.equal(provider.getTreeItem(child).label, 'child · child.js 4', 'the name it got');
+
+  const roots = provider.getChildren(merged);
+  const labels = roots.map((/** @type {any} */ root) => String(provider.getTreeItem(root).label));
+  const pids = /** @type {any[]} */ (merged.trace.start?.merged).map((proc) => proc.pid);
+  assert.equal(labels[0], `server ${pids[0]} › load index.js`);
+  assert.ok(labels.includes(`child ${pids[1]} › load child.js`));
+  assert.ok(labels.indexOf(`server ${pids[0]} › load index.js`) < labels.indexOf(`child ${pids[1]} › load child.js`), 'in the order they ran');
+  const colors = roots.map((/** @type {any} */ root) => provider.getTreeItem(root).iconPath.color?.id);
+  assert.deepEqual([...new Set(colors)].sort(), ['charts.blue', 'charts.orange'], 'a color per process');
+  assert.match(fs.readFileSync(merged.file.replace(/[.]jsonl$/, '.txt'), 'utf8'), /\nserver \d+ +│ load index\.js\n/);
+
+  fake.picks.push(['server · index.js', 'child · child.js 4']);
+  await fake.commands['jstrace.mergeLogs'](app);
+  assert.equal(provider.getChildren().length, 4, 'one log picks the others from a list');
 });
 
 test('the tree follows a log as it is written, keeping its items', (t) => {

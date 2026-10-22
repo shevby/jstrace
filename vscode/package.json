@@ -74,6 +74,18 @@
         "category": "jstrace"
       },
       {
+        "command": "jstrace.mergeLogs",
+        "title": "Merge Logs…",
+        "category": "jstrace",
+        "icon": "$(git-merge)"
+      },
+      {
+        "command": "jstrace.nameProcess",
+        "title": "Name Process…",
+        "category": "jstrace",
+        "icon": "$(tag)"
+      },
+      {
         "command": "jstrace.openText",
         "title": "Open as Text",
         "category": "jstrace",
@@ -186,19 +198,24 @@
           "group": "navigation@0"
         },
         {
-          "command": "jstrace.refresh",
+          "command": "jstrace.mergeLogs",
           "when": "view == jstrace.calls",
           "group": "navigation@1"
         },
         {
-          "command": "jstrace.clearLogs",
+          "command": "jstrace.refresh",
           "when": "view == jstrace.calls",
           "group": "navigation@2"
         },
         {
-          "command": "jstrace.restore",
+          "command": "jstrace.clearLogs",
           "when": "view == jstrace.calls",
           "group": "navigation@3"
+        },
+        {
+          "command": "jstrace.restore",
+          "when": "view == jstrace.calls",
+          "group": "navigation@4"
         },
         {
           "command": "jstrace.search",
@@ -224,7 +241,7 @@
         },
         {
           "command": "jstrace.openText",
-          "when": "view == jstrace.calls && viewItem == log",
+          "when": "view == jstrace.calls && viewItem =~ /^(log|mergedLog)$/",
           "group": "inline"
         },
         {
@@ -259,17 +276,27 @@
         },
         {
           "command": "jstrace.expandAll",
-          "when": "view == jstrace.calls && viewItem =~ /^(project|log|call|callSite|external|resume|load|group)$/",
+          "when": "view == jstrace.calls && viewItem =~ /^(project|log|mergedLog|call|callSite|external|resume|load|group)$/",
           "group": "1_details@2"
         },
         {
           "command": "jstrace.openText",
-          "when": "view == jstrace.calls && viewItem == log",
+          "when": "view == jstrace.calls && viewItem =~ /^(log|mergedLog)$/",
           "group": "1_details@3"
         },
         {
+          "command": "jstrace.mergeLogs",
+          "when": "view == jstrace.calls && viewItem == log",
+          "group": "2_process@1"
+        },
+        {
+          "command": "jstrace.nameProcess",
+          "when": "view == jstrace.calls && viewItem == log",
+          "group": "2_process@2"
+        },
+        {
           "submenu": "jstrace.step",
-          "when": "view =~ /^jstrace[.](calls|searchResults)$/ && viewItem =~ /^(log|call|callSite|external|resume|load|group)$/",
+          "when": "view =~ /^jstrace[.](calls|searchResults)$/ && viewItem =~ /^(log|mergedLog|call|callSite|external|resume|load|group)$/",
           "group": "0_go@9"
         }
       ],

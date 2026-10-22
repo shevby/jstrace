@@ -266,7 +266,7 @@ test('relativePath keeps a path outside the project as it is', () => {
   assert.equal(logs.relativePath(ROOT, outside), outside);
 });
 
-test('listLogs lists newest first, and clearLogs deletes each log with its .txt', (t) => {
+test('listLogs lists newest first, and clearLogs deletes each log with its .txt, and the names', (t) => {
   const dir = copyFixture(t, 'app');
   const folder = path.join(dir, '.jstrace', 'logs');
   assert.deepEqual(logs.listLogs(folder), [], 'no folder, no logs');
@@ -277,8 +277,89 @@ test('listLogs lists newest first, and clearLogs deletes each log with its .txt'
   }
   fs.writeFileSync(path.join(folder, 'notes.md'), '');
   assert.deepEqual(logs.listLogs(folder).map((log) => path.basename(log)), ['2026-02-01T00-00-00.000Z-2.jsonl', '2026-01-01T00-00-00.000Z-1.jsonl']);
+  logs.setName(logs.listLogs(folder)[0], 'server');
   assert.equal(logs.clearLogs(folder), 2);
   assert.deepEqual(fs.readdirSync(folder), ['notes.md']);
+});
+
+test('processes are named in their log folder, by default after their script', (t) => {
+  const dir = copyFixture(t, 'app');
+  const folder = path.join(dir, '.jstrace', 'logs');
+  fs.mkdirSync(folder, { recursive: true });
+  const log = path.join(folder, '2026-01-01T00-00-00.000Z-1.jsonl');
+  assert.deepEqual(logs.readNames(folder), {});
+  logs.setName(log, 'server');
+  assert.deepEqual(logs.readNames(folder), { '2026-01-01T00-00-00.000Z-1.jsonl': 'server' });
+  logs.setName(log, '');
+  assert.deepEqual(logs.readNames(folder), {});
+  assert.equal(logs.defaultName(logs.parseLog(LOG), log), 'app');
+  assert.equal(logs.defaultName(logs.parseLog(''), log), '2026-01-01T00-00-00.000Z-1', 'without a script, the log file');
+});
+
+test('merging logs interleaves their processes by time, renumbered, each event marked with its process', () => {
+  const lines = (/** @type {object[]} */ ...events) => events.map((event) => JSON.stringify(event)).join('\n') + '\n';
+  const call = (/** @type {number} */ id, /** @type {number | null} */ parent, /** @type {string} */ name, /** @type {number} */ time, args = {}) =>
+    ({ type: 'call', id, parent, depth: parent === null ? 0 : 1, name, file: file('lib.js'), line: id, column: 0, args, time });
+  const server = lines(
+    { type: 'start', pid: 10, argv: ['node', file('server.js')], cwd: ROOT, started: '2026-01-01T00:00:00.000Z', time: 0 },
+    { type: 'load', id: 1, parent: null, depth: 0, file: file('server.js'), time: 0.5 },
+    call(2, 1, 'send', 1, { msg: 'hi' }),
+    { type: 'return', call: 2, parent: 2, value: true, time: 2 },
+    call(3, null, 'onReply', 10, { msg: 'ok' }),
+    { type: 'return', call: 3, parent: 3, time: 11 },
+    { ...call(4, null, 'tick', 12), line: 1 },
+    { type: 'return', call: 4, parent: 4, time: 12 },
+  );
+  const client = lines(
+    { type: 'start', pid: 20, argv: ['node', file('client.js')], cwd: ROOT, started: '2026-01-01T00:00:00.003Z', time: 0 },
+    { type: 'load', id: 1, parent: null, depth: 0, file: file('client.js'), time: 0 },
+    call(2, null, 'onMessage', 2, { msg: 'hi' }),
+    call(3, 2, 'reply', 3),
+    { type: 'return', call: 3, parent: 3, time: 4 },
+    { type: 'return', call: 2, parent: 2, time: 4.5 },
+    { ...call(4, null, 'tick', 6.5), line: 1 },
+    { type: 'return', call: 4, parent: 4, time: 6.5 },
+  );
+  const { jsonl, txt } = logs.mergeLogs([
+    { file: file('.jstrace/logs/a-10.jsonl'), text: server, name: 'server' },
+    { file: file('.jstrace/logs/b-20.jsonl'), text: client + '{"type":"ca', name: 'client' },
+  ], ROOT);
+  const trace = logs.parseLog(jsonl);
+  assert.deepEqual(trace.start?.merged.map((/** @type {any} */ proc) => [proc.name, proc.pid, proc.file]), [['server', 10, 'a-10.jsonl'], ['client', 20, 'b-20.jsonl']]);
+  assert.equal(logs.logLabel(trace, 'x.jsonl', ROOT), 'merged: server + client');
+  assert.match(logs.logDescription(trace), /  pids 10, 20$/);
+  assert.equal(logs.isRunning(trace, Date.now()), false);
+  assert.deepEqual(trace.roots.map((node) => logs.nodeLabel(node, ROOT)), [
+    'server 10 › load server.js',
+    'client 20 › load client.js',
+    'client 20 › onMessage(msg: "hi")',
+    'client 20 › tick()',
+    'server 10 › onReply(msg: "ok")',
+    'server 10 › tick()',
+  ]);
+  const [, , onMessage] = trace.roots;
+  assert.deepEqual([onMessage.event.id, onMessage.event.time, onMessage.children[0].event.id, onMessage.children[0].event.parent], [4, 5, 5, 4]);
+  assert.equal(logs.nodeDescription(trace.roots[4]), '← undefined');
+  assert.deepEqual(logs.rows(trace.roots, [], 2).map((row) => row.kind), ['node', 'node', 'node', 'node', 'node', 'node'], "two processes' calls are never one group");
+  assert.deepEqual(logs.search(trace, 'client hi', ROOT).map((node) => node.event.id), [4]);
+  assert.deepEqual(txt.trim().split('\n'), [
+    'jstrace: 2 processes merged: server (pid 10), client (pid 20)',
+    'server 10 │ load server.js',
+    'server 10 │   send(msg: "hi") #2  lib.js:2',
+    'server 10 │     ← true',
+    'client 20 │ load client.js',
+    'client 20 │ onMessage(msg: "hi") #4  lib.js:2',
+    'client 20 │   reply() #5  lib.js:3',
+    'client 20 │     ← undefined',
+    'client 20 │   ← undefined',
+    'client 20 │ tick() #6  lib.js:1',
+    'client 20 │   ← undefined',
+    'server 10 │ onReply(msg: "ok") #7  lib.js:3',
+    'server 10 │   ← undefined',
+    'server 10 │ tick() #8  lib.js:1',
+    'server 10 │   ← undefined',
+  ]);
+  assert.throws(() => logs.mergeLogs([{ file: file('empty.jsonl'), text: '', name: 'x' }], ROOT), /empty\.jsonl has no start/);
 });
 
 test("the app fixture's real logs parse into complete trees", (t) => {
