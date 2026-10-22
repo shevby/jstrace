@@ -13,7 +13,7 @@ Section names in parentheses (Architecture, Glossary, …) refer to [CLAUDE.md](
 
 ## 0. Foundation
 
-- [ ] 0.4 Test fixtures (`test/fixtures/`): a small CommonJS app with plain functions, classes (getters/setters, constructors), arrows and callbacks, async/await, a generator, a package in `node_modules`, a file acorn can't parse, and a child process.
+All done; see [DONE.md](DONE.md).
 
 ## 1. Instrumenter (CLI)
 

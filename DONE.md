@@ -11,3 +11,9 @@ These are completed roadmap items, moved out of [ROADMAP.md](ROADMAP.md) to keep
 - [x] 0.3 JSDoc, `jsconfig.json` (`checkJs`), and `npm run typecheck`: TypeScript 7 as a dev-only checker, now part of `npm run check`.
   - `@types/node` is pinned to 18, the oldest Node supported, so newer APIs are type errors.
   - `@types/vscode` is 1.100, matching `engines.vscode`.
+- [x] 0.4 Test fixtures: `test/fixtures/app`, a small CommonJS app.
+  - It has a shebang and directive in `index.js`. `lib/math.js` has every plain function form, a throw caught by its caller, object method shorthand, and a function assigned to a property. `lib/shapes.js` has classes with constructors and `super`, a getter/setter, a static method, an arrow class field, and a private field.
+  - `lib/tasks.js` has async/await, an async arrow, timer and `.then()` callbacks, and a generator.
+  - There's also a `.cjs` file, a `.min.js` file, `lib/esm.js` (which acorn can't parse as a script, and nothing requires), a `greeter` package in `node_modules` that calls back into the app, and `child.js`, forked as a second process.
+  - `test/helpers.js` has `copyFixture(t, name)`, which copies a fixture into a temp directory removed after the test, and `APP_OUTPUT`, what the app prints; instrumenting must not change it.
+  - `.gitignore` lets the fixtures' `node_modules` in.

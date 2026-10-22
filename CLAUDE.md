@@ -25,7 +25,7 @@ It's a debugging aid, not a product. Keep it small. Slow tracing is fine, and sc
 2. **[acorn](https://github.com/acornjs/acorn)** is the only third-party runtime dependency, and only the CLI uses it. There's no code generator (astring, escodegen): code is changed by inserting text at acorn's `start`/`end` offsets, using a small hand-written AST walker. Globs are matched by hand too.
 3. **VSCode extension**: plain JS with no bundler, and no dependencies beyond the `vscode` API. Installed locally (a `.vsix`, or a symlink into the extensions folder).
 4. **Dev-only tools** (TypeScript as a checker, `@types/node`, `@types/vscode`) are fine, since they never ship.
-5. **Tests**: the built-in runner (`npm test` → `node --test`). Test files sit next to the code they test as `*.test.js`. Tests work in temp directories and never instrument, restore, or write logs into a real project.
+5. **Tests**: the built-in runner (`npm test` → `node --test`). Test files sit next to the code they test as `*.test.js`. Tests work in temp directories and never instrument, restore, or write logs into a real project. They take a fixture with `copyFixture(t, name)` from `test/helpers.js`, never using it in place.
 
 ## Code Conventions
 
