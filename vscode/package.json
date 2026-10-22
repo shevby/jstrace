@@ -71,6 +71,18 @@
         "icon": "$(go-to-file)"
       },
       {
+        "command": "jstrace.showDetails",
+        "title": "Show Details",
+        "category": "jstrace",
+        "icon": "$(info)"
+      },
+      {
+        "command": "jstrace.expandAll",
+        "title": "Expand All Below",
+        "category": "jstrace",
+        "icon": "$(expand-all)"
+      },
+      {
         "command": "jstrace.open",
         "title": "Go to Code",
         "category": "jstrace"
@@ -104,6 +116,26 @@
           "command": "jstrace.openText",
           "when": "view == jstrace.calls && viewItem == log",
           "group": "inline"
+        },
+        {
+          "command": "jstrace.showDetails",
+          "when": "view == jstrace.calls && viewItem =~ /^(call|resume|load|group)$/",
+          "group": "inline"
+        },
+        {
+          "command": "jstrace.showDetails",
+          "when": "view == jstrace.calls && viewItem =~ /^(call|resume|load|group)$/",
+          "group": "1_details@1"
+        },
+        {
+          "command": "jstrace.expandAll",
+          "when": "view == jstrace.calls && viewItem =~ /^(project|log|call|resume|load|group)$/",
+          "group": "1_details@2"
+        },
+        {
+          "command": "jstrace.openText",
+          "when": "view == jstrace.calls && viewItem == log",
+          "group": "1_details@3"
         }
       ],
       "explorer/context": [
