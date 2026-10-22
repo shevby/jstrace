@@ -1,0 +1,19 @@
+{
+  "name": "jstrace",
+  "version": "0.1.0",
+  "description": "Injects function-call tracing into the CommonJS files of a folder.",
+  "license": "MIT",
+  "author": "Bohdan Shevchenko",
+  "private": true,
+  "type": "commonjs",
+  "main": "src/cli.js",
+  "bin": {
+    "jstrace": "bin/jstrace.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "acorn": "^8.19.0"
+  }
+}

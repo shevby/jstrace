@@ -1,0 +1,19 @@
+{
+  "name": "jstrace-vscode",
+  "displayName": "jstrace",
+  "description": "Browse jstrace call logs and jump to the functions they name.",
+  "version": "0.1.0",
+  "license": "MIT",
+  "author": "Bohdan Shevchenko",
+  "publisher": "local",
+  "private": true,
+  "type": "commonjs",
+  "main": "./extension.js",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "activationEvents": [
+    "workspaceContains:**/.jstrace"
+  ],
+  "contributes": {}
+}
