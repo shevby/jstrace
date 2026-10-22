@@ -12,7 +12,8 @@
   "scripts": {
     "test": "node --test \"cli/**/*.test.js\" \"vscode/**/*.test.js\" \"test/*.test.js\"",
     "typecheck": "tsc -p jsconfig.json",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "package": "node vscode/pack.js"
   },
   "engines": {
     "node": ">=18"
