@@ -2,7 +2,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { main } = require('../cli/src/cli');
@@ -176,6 +176,43 @@ test('a call site finds the callee by the name it is written with', () => {
   assert.equal(logs.columnOf('  x.#hidden();', '#hidden'), 4);
   assert.equal(logs.columnOf('  const factorials = 1; run();', 'factorial'), 2, 'no name there: the first character');
   assert.equal(logs.columnOf('    items.map(callback);', ''), 4);
+});
+
+test('readMore reads a log as it grows, a line at a time', (t) => {
+  const dir = copyFixture(t, 'app');
+  const log = path.join(dir, 'x.jsonl');
+  const start = JSON.stringify({ type: 'start', pid: 1, argv: [], cwd: dir, started: '2026-01-01T00:00:00.000Z', time: 0 });
+  const call = JSON.stringify({ type: 'call', id: 1, parent: null, depth: 0, name: 'f', file: file('a.js'), line: 1, column: 0, args: { s: 'é😀' }, time: 1 });
+  const cut = Buffer.from(call).length - 4; // inside the emoji
+  fs.writeFileSync(log, Buffer.concat([Buffer.from(`${start}\n`), Buffer.from(call).subarray(0, cut)]));
+  /** @type {import('./logs').Tail} */
+  const tail = { trace: logs.parseLog(''), offset: 0 };
+  assert.equal(logs.readMore(log, tail), true);
+  assert.equal(tail.offset, start.length + 1, 'the line being written waits');
+  assert.equal(tail.trace.nodes.size, 0);
+  assert.equal(logs.readMore(log, tail), false, 'nothing complete added');
+
+  fs.appendFileSync(log, Buffer.concat([Buffer.from(call).subarray(cut), Buffer.from(`\n${JSON.stringify({ type: 'return', call: 1, parent: 1, value: 2, time: 2 })}\n`)]));
+  const trace = tail.trace;
+  assert.equal(logs.readMore(log, tail), true);
+  assert.equal(tail.trace, trace, 'the same trees, grown');
+  assert.equal(tail.trace.roots[0].event.args.s, 'é😀');
+  assert.equal(tail.trace.roots[0].outcome?.value, 2);
+
+  fs.writeFileSync(log, `${start}\n`);
+  assert.equal(logs.readMore(log, tail), true);
+  assert.notEqual(tail.trace, trace, 'a log that got shorter is read again');
+  assert.equal(tail.trace.nodes.size, 0);
+});
+
+test("isRunning tells whether a log's process still runs", () => {
+  const now = Date.now();
+  const running = logs.parseLog(JSON.stringify({ type: 'start', pid: process.pid }));
+  assert.equal(logs.isRunning(running, now, now), true);
+  assert.equal(logs.isRunning(running, now - 31 * 60 * 1000, now), false, 'not changed for 30 minutes: its pid may be taken');
+  const { pid } = spawnSync(process.execPath, ['-e', '0']);
+  assert.equal(logs.isRunning(logs.parseLog(JSON.stringify({ type: 'start', pid })), now, now), false);
+  assert.equal(logs.isRunning(logs.parseLog(''), now, now), false);
 });
 
 test('relativePath keeps a path outside the project as it is', () => {

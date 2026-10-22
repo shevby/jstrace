@@ -29,7 +29,8 @@ const { cliCommand, runCli } = require('./cli');
  * @property {string} file the `.jsonl` file
  * @property {string} root the project folder, which paths are shown relative to
  * @property {ProjectItem | undefined} project its project's item, when projects are shown
- * @property {string} stamp the file's size and time when it was read, to tell it changed
+ * @property {number} offset how much of the file was read (see `readMore`)
+ * @property {boolean} running whether its process still runs (see `isRunning`)
  * @property {Trace} trace
  * @property {Map<number, NodeItem>} nodes the items made for its nodes, by id
  * @property {Map<string, RowItem>} rows the items made for its groups and skips, by id
@@ -65,20 +66,6 @@ function groupMin() {
 }
 
 /**
- * The size and modification time of a file, or `undefined` once it's gone.
- * @param {string} file
- * @returns {string | undefined}
- */
-function stampOf(file) {
-  try {
-    const stat = fs.statSync(file);
-    return `${stat.size}:${stat.mtimeMs}`;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
  * The workspace folders that are jstrace projects, with a `.jstrace/` folder.
  * @returns {vscode.WorkspaceFolder[]}
  */
@@ -97,8 +84,8 @@ function logFolder(folder) {
 
 /**
  * The tree view's data: projects (with more than one) → logs, newest first → call trees.
- * Logs are read when listed and read again once they change, but not watched while open
- * (no live tailing).
+ * Logs are read as they grow: from where the last read stopped, when listed or expanded and
+ * every second (`tick`), so a running program's calls show up as it makes them.
  * @implements {vscode.TreeDataProvider<Item>}
  */
 class CallsProvider {
@@ -185,8 +172,8 @@ class CallsProvider {
       const { trace, file, root } = element;
       const item = new vscode.TreeItem(logs.logLabel(trace, file, root), Collapsed);
       item.id = `log:${file}`;
-      item.description = logs.logDescription(trace);
-      item.iconPath = new vscode.ThemeIcon('pulse');
+      item.description = `${logs.logDescription(trace)}${element.running ? '  running' : ''}`;
+      item.iconPath = new vscode.ThemeIcon(element.running ? 'sync~spin' : 'pulse');
       item.contextValue = 'log';
       const start = trace.start;
       item.tooltip = start
@@ -210,7 +197,7 @@ class CallsProvider {
     const event = node.event;
     const item = new vscode.TreeItem(logs.nodeLabel(node, log.root), node.children.length + node.skips.length > 0 ? Collapsed : None);
     item.id = `node:${log.file}#${event.id}`;
-    item.description = logs.nodeDescription(node);
+    item.description = logs.nodeDescription(node) || (log.running && event.type === 'call' && !node.outcome ? 'running…' : '');
     const end = event.type === 'call' ? node.outcome ?? node.end : node.end;
     item.iconPath =
       end?.type === 'throw'
@@ -274,7 +261,7 @@ class CallsProvider {
       let item = this.logItems.get(file);
       if (!item) {
         item = {
-          kind: 'log', file, root: folder.uri.fsPath, project, stamp: '', trace: logs.parseLog(''), nodes: new Map(), rows: new Map(), parents: new Map(),
+          kind: 'log', file, root: folder.uri.fsPath, project, offset: 0, running: false, trace: logs.parseLog(''), nodes: new Map(), rows: new Map(), parents: new Map(),
         };
         this.logItems.set(file, item);
       }
@@ -286,20 +273,41 @@ class CallsProvider {
   }
 
   /**
-   * Reads a log again if it changed since it was read.
+   * Reads what was added to a log since it was read, and whether its process still runs.
    * @param {LogItem} item
-   * @returns {void}
+   * @returns {boolean} whether anything changed
    */
   update(item) {
-    const stamp = stampOf(item.file);
-    if (stamp === undefined || stamp === item.stamp) return;
+    const before = item.trace;
+    let grew = false;
+    let modified = 0;
     try {
-      item.trace = logs.readLog(item.file);
-      item.stamp = stamp;
+      grew = logs.readMore(item.file, item);
+      modified = fs.statSync(item.file).mtimeMs;
+    } catch {
+      return false; // gone
+    }
+    if (item.trace !== before) {
       item.nodes.clear();
       item.rows.clear();
       item.parents.clear();
-    } catch {}
+    }
+    const running = logs.isRunning(item.trace, modified);
+    const changed = grew || running !== item.running;
+    item.running = running;
+    return changed;
+  }
+
+  /**
+   * Follows the logs listed (live tailing, 4.2): reads what was added to each, and refreshes
+   * only the logs that changed, so what's expanded stays expanded.
+   * @returns {void}
+   */
+  tick() {
+    for (const [file, item] of this.logItems) {
+      if (!fs.existsSync(file)) this.logItems.delete(file);
+      else if (this.update(item)) this.changed.fire(item);
+    }
   }
 
   /**
@@ -347,6 +355,8 @@ function activate(context) {
     clearTimeout(pending);
     pending = setTimeout(() => provider.refresh(), 300);
   };
+  const ticker = setInterval(() => provider.tick(), 1000);
+  ticker.unref(); // not to keep a process alive (tests)
   const watcher = vscode.workspace.createFileSystemWatcher('**/.jstrace/logs/*.jsonl', false, true, false);
   watcher.onDidCreate(refreshSoon);
   watcher.onDidDelete(refreshSoon);
@@ -384,6 +394,7 @@ function activate(context) {
     output,
     watcher,
     { dispose: () => clearTimeout(pending) },
+    { dispose: () => clearInterval(ticker) },
     vscode.workspace.onDidChangeWorkspaceFolders(() => provider.refresh()),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration('jstrace.groupRepeats')) provider.regroup();

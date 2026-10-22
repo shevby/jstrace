@@ -36,8 +36,13 @@ function fakeVscode(dir) {
     EventEmitter: class {
       constructor() {
         this.event = () => ({ dispose() {} });
+        /** @type {unknown[]} */
+        this.fired = [];
       }
-      fire() {}
+      /** @param {unknown} value */
+      fire(value) {
+        this.fired.push(value);
+      }
     },
     TreeItem: class {
       /** @param {string} label @param {number} collapsibleState */
@@ -216,4 +221,39 @@ test('the extension injects, shows the call trees, jumps to code, restores and c
   await fake.commands['jstrace.clearLogs']();
   assert.deepEqual(fake.messages.slice(1), ['warning: Delete 2 jstrace logs?']);
   assert.deepEqual(provider.getChildren(), []);
+});
+
+test('the tree follows a log as it is written, keeping its items', (t) => {
+  const dir = copyFixture(t, 'app');
+  const folder = path.join(dir, '.jstrace', 'logs');
+  fs.mkdirSync(folder, { recursive: true });
+  const provider = activate(dir).provider();
+  const log = path.join(folder, '2026-01-01T00-00-00.000Z-1.jsonl');
+  const index = path.join(dir, 'index.js');
+  const lines = (/** @type {object[]} */ ...events) => events.map((event) => `${JSON.stringify(event)}\n`).join('');
+  fs.writeFileSync(log, lines(
+    { type: 'start', pid: process.pid, argv: ['node', index], cwd: dir, started: new Date().toISOString(), time: 0 },
+    { type: 'call', id: 1, parent: null, depth: 0, name: 'main', file: index, line: 23, column: 0, args: {}, time: 1 },
+  ));
+
+  const [item] = provider.getChildren();
+  const logItem = provider.getTreeItem(item);
+  assert.equal(logItem.iconPath.id, 'sync~spin', 'its process runs');
+  assert.match(logItem.description, /running$/);
+  const [main] = provider.getChildren(item);
+  assert.equal(provider.getTreeItem(main).description, 'running…');
+
+  fs.appendFileSync(log, lines(
+    { type: 'call', id: 2, parent: 1, depth: 1, name: 'greet', file: index, line: 6, column: 0, args: {}, time: 2 },
+    { type: 'return', call: 2, parent: 2, value: 'hi', time: 3 },
+    { type: 'return', call: 1, parent: 1, time: 4 },
+  ));
+  provider.changed.fired.length = 0;
+  provider.tick();
+  assert.deepEqual(provider.changed.fired, [item], 'only the log that grew is refreshed');
+  assert.equal(provider.getChildren(item)[0], main, 'with the same items, so what is expanded stays expanded');
+  assert.equal(provider.getTreeItem(main).description, '← undefined');
+  assert.deepEqual(provider.getChildren(main).map((/** @type {any} */ child) => provider.getTreeItem(child).label), ['greet()']);
+  provider.tick();
+  assert.equal(provider.changed.fired.length, 1, 'nothing new, nothing refreshed');
 });
