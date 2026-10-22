@@ -44,7 +44,7 @@ test('the .vsix holds the extension and a CLI that runs from it', async (t) => {
   const out = fs.mkdtempSync(path.join(os.tmpdir(), 'jstrace-vsix-'));
   t.after(() => fs.rmSync(out, { recursive: true, force: true }));
   const files = unzip(fs.readFileSync(pack(out)));
-  for (const name of ['extension.vsixmanifest', '[Content_Types].xml', 'extension/package.json', 'extension/extension.js', 'extension/media/jstrace.svg']) {
+  for (const name of ['extension.vsixmanifest', '[Content_Types].xml', 'extension/package.json', 'extension/LICENSE', 'extension/extension.js', 'extension/media/jstrace.svg']) {
     assert.ok(files.has(name), name);
   }
   assert.ok(![...files.keys()].some((name) => name.endsWith('.test.js')), 'no tests');

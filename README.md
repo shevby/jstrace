@@ -19,6 +19,7 @@ It's a debugging aid: tracing is slow, and that's fine.
 - [Logs](#logs)
 - [Limits](#limits)
 - [Development](#development)
+- [License](#license)
 
 ## Install
 
@@ -285,3 +286,7 @@ npm run package   # build the .vsix
 ```
 
 The code is plain JavaScript (CommonJS) with JSDoc types and no build step. The CLI's only dependency is [acorn](https://github.com/acornjs/acorn); the extension has none. [CLAUDE.md](CLAUDE.md) describes the architecture and conventions, [ROADMAP.md](ROADMAP.md) what's planned, and [DONE.md](DONE.md) what's done.
+
+## License
+
+[MIT](LICENSE). The CLI bundles [acorn](https://github.com/acornjs/acorn), also MIT, with its own license.

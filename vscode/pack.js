@@ -119,7 +119,7 @@ function sources(dir) {
 }
 
 /**
- * The files of the package: the extension, the CLI with acorn, and the manifests.
+ * The files of the package: the extension with its license, the CLI with acorn, and the manifests.
  * @returns {Entry[]}
  */
 function entries() {
@@ -128,6 +128,7 @@ function entries() {
   /** @type {[string, string][]} the files as [name in the zip, source] */
   const files = [
     ...['package.json', 'extension.js', 'logs.js', 'cli.js'].map((name) => [`extension/${name}`, path.join(EXTENSION, name)]),
+    ['extension/LICENSE', path.join(EXTENSION, '..', 'LICENSE')],
     ...fs.readdirSync(path.join(EXTENSION, 'media')).map((name) => [`extension/media/${name}`, path.join(EXTENSION, 'media', name)]),
     ['extension/cli/package.json', path.join(CLI, 'package.json')],
     ...['bin', 'src', 'runtime'].flatMap((dir) =>
@@ -153,6 +154,7 @@ function entries() {
   <Dependencies />
   <Assets>
     <Asset Type="Microsoft.VisualStudio.Code.Manifest" Path="extension/package.json" Addressable="true" />
+    <Asset Type="Microsoft.VisualStudio.Services.Content.License" Path="extension/LICENSE" Addressable="true" />
   </Assets>
 </PackageManifest>
 `;
