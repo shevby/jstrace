@@ -207,9 +207,7 @@ class CallsProvider {
     item.command =
       event.type === 'resume'
         ? { title: 'Show the call', command: 'jstrace.showCall', arguments: [element] }
-        : event.site
-          ? { title: 'Go to where it was called', command: 'jstrace.goToSite', arguments: [element] }
-          : { title: 'Go to code', command: 'jstrace.open', arguments: [event.file, event.line ?? 1, event.column ?? 0] };
+        : { title: 'Show where it was called, with its values', command: 'jstrace.showStep', arguments: [element] };
     return item;
   }
 
@@ -602,7 +600,19 @@ function activate(context) {
     }
     if (!next) return void vscode.window.setStatusBarMessage(`jstrace: no ${how === 'out' ? 'caller' : how.startsWith('back') ? 'call before it' : 'call after it'}`, 3000);
     const item = provider.nodeItem(log, next);
-    const event = next.event;
+    await showStep(item);
+    await view.reveal(item, { select: true, focus: true });
+  }
+
+  /**
+   * Shows a call as a step does (and a click): where it was called (its code, without a
+   * site) with the line highlighted and the call's label and outcome at its end, the editor
+   * leaving the focus where it was. Steps then go on from it.
+   * @param {NodeItem} item
+   * @returns {Promise<void>}
+   */
+  async function showStep(item) {
+    const event = item.node.event;
     const [file, line, column, name] = event.site
       ? [event.site.file, event.site.line, null, logs.callName(event.name)]
       : [event.file, event.line ?? 1, event.column ?? 0, undefined];
@@ -621,7 +631,6 @@ function activate(context) {
     } catch (error) {
       vscode.window.showErrorMessage(`jstrace: can't open ${file}: ${error instanceof Error ? error.message : String(error)}`);
     }
-    await view.reveal(item, { select: true, focus: true });
   }
 
   context.subscriptions.push(
@@ -746,15 +755,25 @@ function activate(context) {
     vscode.commands.registerCommand(
       'jstrace.showCall',
       /**
-       * Selects the call a resume is part of, and goes to the function's code.
+       * Selects the call a resume is part of, and shows it as a step does (the resume
+       * itself, when its call wasn't logged).
        * @param {NodeItem} element a resume
        */
       async (element) => {
         const call = element.log.trace.nodes.get(element.node.event.call);
-        const event = element.node.event;
-        if (call) await view.reveal(provider.nodeItem(element.log, call), { select: true, focus: false });
-        await vscode.commands.executeCommand('jstrace.open', event.file, event.line, event.column);
+        const item = call ? provider.nodeItem(element.log, call) : element;
+        await showStep(item);
+        if (call) await view.reveal(item, { select: true, focus: false });
       },
+    ),
+
+    vscode.commands.registerCommand(
+      'jstrace.showStep',
+      /**
+       * A click on a call or a load: shows it as a step does, so the keys step on from it.
+       * @param {NodeItem} element
+       */
+      (element) => showStep(element),
     ),
 
     vscode.workspace.registerTextDocumentContentProvider('jstrace', {

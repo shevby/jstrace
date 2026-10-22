@@ -186,7 +186,7 @@ test('the extension injects, shows the call trees, jumps to code, restores and c
   const main = roots.find((/** @type {any} */ item) => item.node?.event.name === 'main');
   const mainItem = provider.getTreeItem(main);
   assert.deepEqual([mainItem.label, mainItem.description, mainItem.iconPath.id], ['main()', '← undefined', 'symbol-function']);
-  assert.equal(mainItem.command.command, 'jstrace.goToSite');
+  assert.equal(mainItem.command.command, 'jstrace.showStep');
 
   const calls = provider.getChildren(main);
   const factorial = calls.find((/** @type {any} */ item) => item.node.event.name === 'factorial');
@@ -194,12 +194,15 @@ test('the extension injects, shows the call trees, jumps to code, restores and c
   const item = provider.getTreeItem(factorial);
   assert.deepEqual([item.label, item.description], ['factorial(n: 5)', '← 120']);
   assert.match(provider.resolveTreeItem(item, factorial).tooltip.value, /Returned:/);
-  /** @param {string} file @param {number} line @param {number} character */
-  const at = (file, line, character) => ({ file: path.join(dir, file), options: { selection: { start: { line, character }, end: { line, character } } } });
+  /** @param {string} file @param {number} line @param {number} character @param {object} [focus] */
+  const at = (file, line, character, focus = {}) => ({ file: path.join(dir, file), options: { selection: { start: { line, character }, end: { line, character } }, ...focus } });
   const opened = () => JSON.parse(JSON.stringify(fake.opened.pop()));
   assert.equal(provider.getTreeItem(factorial).contextValue, 'callSite');
   await fake.commands[item.command.command](...item.command.arguments);
-  assert.deepEqual(opened(), at('index.js', 25, 36), 'a click goes to where it was called, on the call (the editor takes the focus, to show its cursor)');
+  assert.deepEqual(opened(), at('index.js', 25, 36, { preserveFocus: true }), 'a click shows where it was called, on the call, the tree keeping the focus');
+  assert.equal(fake.decorations[0][0].renderOptions.after.contentText, 'factorial(n: 5)  ← 120', 'with its values');
+  await fake.commands['jstrace.goToSite'](factorial);
+  assert.deepEqual(opened(), at('index.js', 25, 36), 'Go to Call Site: there too, the editor taking the focus to show its cursor');
   await fake.commands['jstrace.goToFunction'](factorial);
   assert.deepEqual(opened(), at(path.join('lib', 'math.js'), 6, 0), 'the button goes to the function');
   assert.match(provider.resolveTreeItem(item, factorial).tooltip.value, /Called from index\.js:26/);
@@ -233,6 +236,7 @@ test('the extension injects, shows the call trees, jumps to code, restores and c
   await fake.commands[resumeItem.command.command](...resumeItem.command.arguments);
   const double = fake.revealed.pop();
   assert.equal(double.node.event.id, resume.node.event.call, 'a resume shows its call');
+  assert.match(fake.decorations[0][0].renderOptions.after.contentText, /^double\(value: \d\)  ← \d+$/, 'as a step does');
   assert.equal(provider.getTreeItem(provider.getParent(double)).label, 'total(values: [1,2,3])', 'which the tree can reach');
 
   fake.messages.length = 0;
