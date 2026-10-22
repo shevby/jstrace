@@ -507,8 +507,8 @@ function activate(context) {
     backgroundColor: new vscode.ThemeColor('editor.stackFrameHighlightBackground'),
     after: { color: new vscode.ThemeColor('editorCodeLens.foreground'), fontStyle: 'italic', margin: '0 0 0 2em' },
   });
-  /** @type {{ item: NodeItem | undefined, editor: vscode.TextEditor | undefined }} where the last step went */
-  const stepped = { item: undefined, editor: undefined };
+  /** @type {{ item: NodeItem | undefined, editor: vscode.TextEditor | undefined, line: number }} where the last step went */
+  const stepped = { item: undefined, editor: undefined, line: -1 };
   const output = vscode.window.createOutputChannel('jstrace');
   /** @type {Map<string, string>} the details tabs' contents, by URI */
   const details = new Map();
@@ -563,8 +563,9 @@ function activate(context) {
    * @returns {void}
    */
   function clearStep() {
+    if (stepped.editor) void vscode.commands.executeCommand('setContext', 'jstrace.stepShown', false);
     stepped.editor?.setDecorations(stepDecoration, []);
-    Object.assign(stepped, { item: undefined, editor: undefined });
+    Object.assign(stepped, { item: undefined, editor: undefined, line: -1 });
   }
 
   /**
@@ -627,7 +628,8 @@ function activate(context) {
       if (text.length > MAX_STEP_TEXT) text = `${text.slice(0, MAX_STEP_TEXT - 1)}…`;
       const end = new vscode.Position(position.line, document.lineAt(position.line).text.length);
       editor.setDecorations(stepDecoration, [{ range: new vscode.Range(end, end), renderOptions: { after: { contentText: text } } }]);
-      stepped.editor = editor;
+      Object.assign(stepped, { editor, line: position.line });
+      void vscode.commands.executeCommand('setContext', 'jstrace.stepShown', true); // for Esc to hide it
     } catch (error) {
       vscode.window.showErrorMessage(`jstrace: can't open ${file}: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -644,6 +646,12 @@ function activate(context) {
     vscode.workspace.onDidChangeTextDocument((event) => {
       if (event.contentChanges.length > 0 && event.document === stepped.editor?.document) clearStep(); // its line may have moved
     }),
+    vscode.window.onDidChangeTextEditorSelection((event) => {
+      // A click on another line of its editor: the user has moved on.
+      const moved = event.selections[0]?.active.line !== stepped.line;
+      if (event.textEditor === stepped.editor && event.kind === vscode.TextEditorSelectionChangeKind.Mouse && moved) clearStep();
+    }),
+    vscode.commands.registerCommand('jstrace.hideStep', clearStep),
     vscode.commands.registerCommand('jstrace.stepInto', (/** @type {unknown} */ from) => stepTo('into', from)),
     vscode.commands.registerCommand('jstrace.stepBack', (/** @type {unknown} */ from) => stepTo('back', from)),
     vscode.commands.registerCommand('jstrace.stepOver', (/** @type {unknown} */ from) => stepTo('over', from)),

@@ -91,6 +91,7 @@ function fakeVscode(dir) {
       from: (/** @type {any} */ parts) => ({ ...parts, fsPath: parts.path, toString: () => `${parts.scheme}:${parts.path}?${parts.query}` }),
     },
     ViewColumn: { Beside: -2 },
+    TextEditorSelectionChangeKind: { Keyboard: 1, Mouse: 2, Command: 3 },
     languages: { setTextDocumentLanguage: async (/** @type {any} */ document, /** @type {string} */ language) => ({ ...document, language }) },
     window: {
       createTreeView: (/** @type {string} */ id, /** @type {any} */ options) =>
@@ -102,6 +103,7 @@ function fakeVscode(dir) {
           dispose() {},
         }),
       createTextEditorDecorationType: () => ({ dispose() {} }),
+      onDidChangeTextEditorSelection: () => ({ dispose() {} }),
       setStatusBarMessage: (/** @type {string} */ text) => void status.push(text),
       showInputBox: async () => inputs.shift(),
       withProgress: (/** @type {any} */ options, /** @type {() => Promise<void>} */ task) => task(),
@@ -201,6 +203,8 @@ test('the extension injects, shows the call trees, jumps to code, restores and c
   await fake.commands[item.command.command](...item.command.arguments);
   assert.deepEqual(opened(), at('index.js', 25, 36, { preserveFocus: true }), 'a click shows where it was called, on the call, the tree keeping the focus');
   assert.equal(fake.decorations[0][0].renderOptions.after.contentText, 'factorial(n: 5)  ← 120', 'with its values');
+  await fake.commands['jstrace.hideStep']();
+  assert.equal(fake.decorations[0].length, 0, 'which Esc hides');
   await fake.commands['jstrace.goToSite'](factorial);
   assert.deepEqual(opened(), at('index.js', 25, 36), 'Go to Call Site: there too, the editor taking the focus to show its cursor');
   await fake.commands['jstrace.goToFunction'](factorial);
