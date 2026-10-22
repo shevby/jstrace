@@ -8,3 +8,6 @@ These are completed roadmap items, moved out of [ROADMAP.md](ROADMAP.md) to keep
 - [x] 0.2 Project skeleton: a root npm workspace over `cli/` and `vscode/`, the `jstrace` bin, `node --test`, and `npm run check`.
   - The CLI parses its command line by hand (`cli/src/cli.js`). `main(argv, output)` returns the exit code: 0 for success, 1 for a failure, 2 for a wrong command line. `instrument` and `restore` say they aren't implemented yet.
   - The extension is an empty `activate`, activated by a `.jstrace` folder in the workspace.
+- [x] 0.3 JSDoc, `jsconfig.json` (`checkJs`), and `npm run typecheck`: TypeScript 7 as a dev-only checker, now part of `npm run check`.
+  - `@types/node` is pinned to 18, the oldest Node supported, so newer APIs are type errors.
+  - `@types/vscode` is 1.100, matching `engines.vscode`.

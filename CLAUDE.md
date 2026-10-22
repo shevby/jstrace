@@ -30,7 +30,7 @@ It's a debugging aid, not a product. Keep it small. Slow tracing is fine, and sc
 ## Code Conventions
 
 - Always write JSDoc for every class, function, method, and exported value (`@param`, `@returns`, `@typedef`, `@type`), so VS Code gives autocompletion and hover docs in plain JS.
-- `jsconfig.json` has `checkJs` on, so type errors show in the editor. `npm run typecheck` runs the same check with TypeScript, which is used only as a checker, never to compile.
+- `jsconfig.json` has `checkJs` on, so type errors show in the editor. `npm run typecheck` runs the same check with TypeScript, which is used only as a checker, never to compile. `@types/node` is pinned to 18, the oldest Node supported, so an API newer than that (`fs.globSync`) is a type error. `@types/vscode` matches the extension's `engines.vscode`. `test/fixtures` isn't checked.
 - **Injected code** (the runtime prelude and the calls woven into functions) must not depend on Node beyond what's listed in Architecture. Keep it compact, and give every name it introduces the `__jt` prefix so it can't collide with user code.
 
 ## Project Structure

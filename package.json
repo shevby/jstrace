@@ -11,9 +11,15 @@
   ],
   "scripts": {
     "test": "node --test \"cli/**/*.test.js\" \"vscode/**/*.test.js\" \"test/*.test.js\"",
-    "check": "npm test"
+    "typecheck": "tsc -p jsconfig.json",
+    "check": "npm run typecheck && npm test"
   },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.130",
+    "@types/vscode": "~1.100.0",
+    "typescript": "^7.0.2"
   }
 }
