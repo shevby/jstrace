@@ -13,7 +13,14 @@
  * - each function starts with `const __jtc = __jtm.enter(index, [params])`, its body in
  *   `try { … } catch (e) { throw __jtc.throw(e) } finally { __jtc.exit() }`, and each
  *   `return x` as `return __jtc.ret(x)`;
- * - `await x` becomes `__jtc.r(await __jtc.sa(x))`, and `yield x` `__jtc.r(yield __jtc.sy(x))`.
+ * - `await x` becomes `__jtc.r(await __jtc.sa(x))`, and `yield x` `__jtc.r(yield __jtc.sy(x))`;
+ * - with `externalCalls` (4.13), `f(a)` becomes `__jtm.cf(i, f)(a)` and `o.m(a)`
+ *   `__jtm.cm(i, o).m(a)`, `i` indexing the file's calls (`load`'s third argument).
+ *
+ * An external call is one of a function that isn't traced (its source has no `__jtm.enter(`,
+ * so it's native, or in a file that isn't instrumented). It's logged as a call of its own,
+ * named by the callee as written, with its arguments by position and no stack read for its
+ * site, being in the file at its `line` and `column`. A traced function is called straight on.
  *
  * The call tree follows a stack of entries: a call pushes one and pops it when it exits or
  * suspends (`sa`, `sy`). A suspended call that runs again pushes a resume entry on top of
@@ -53,12 +60,18 @@
  * An instrumented file.
  * @typedef {object} Module
  * @property {(index: number, args: unknown[]) => Frame} enter a call of the file's function `index`
+ * @property {(index: number, fn: unknown) => unknown} cf the file's call `index` is of `fn`:
+ *   what to call instead
+ * @property {(index: number, object: any) => any} cm the file's call `index` is of a method of
+ *   `object`: what to get it from instead
  */
 
 /**
  * The per-process runtime, `globalThis.__jt`.
  * @typedef {object} Runtime
- * @property {(file: string, functions: FunctionInfo[]) => Module} load an instrumented file starts running
+ * @property {(file: string, functions: FunctionInfo[], calls?: FunctionInfo[]) => Module} load an
+ *   instrumented file starts running; `calls` are those going through the runtime, as callee
+ *   names and positions
  */
 
 /**
@@ -566,8 +579,52 @@ function createRuntime(require, options) {
     }
   }
 
+  /** @type {WeakMap<Function, boolean>} */
+  const tracedFunctions = new WeakMap();
+
+  /**
+   * Whether a function is traced, as its source shows: it was instrumented.
+   * @param {Function} fn
+   * @returns {boolean}
+   */
+  function traced(fn) {
+    let known = tracedFunctions.get(fn);
+    if (known === undefined) {
+      try {
+        known = Function.prototype.toString.call(fn).indexOf('__jtm.enter(') >= 0;
+      } catch (_) {
+        known = false; // a revoked proxy
+      }
+      tracedFunctions.set(fn, known);
+    }
+    return known;
+  }
+
+  /**
+   * What an external call calls instead of a function: the function, logging the call
+   * unless it's traced (and then logs itself).
+   * @param {FunctionInfo} info the call's
+   * @param {string} file
+   * @param {Function} fn
+   * @param {unknown} self what `this` is in it
+   * @returns {Function}
+   */
+  function wrapExternal(info, file, fn, self) {
+    return function () {
+      if (off || busy || traced(fn)) return Reflect.apply(fn, self, arguments);
+      const call = new Call(info, file, arguments, true);
+      try {
+        return call.ret(Reflect.apply(fn, self, arguments));
+      } catch (error) {
+        throw call.throw(error);
+      } finally {
+        call.exit();
+      }
+    };
+  }
+
   /** @type {Frame} */
-  const NOOP = { ret: (value) => value, throw: (error) => error, exit() {}, sa: (value) => value, sy: (value) => value, r: (value) => value };
+  const NOOP ={ ret: (value) => value, throw: (error) => error, exit() {}, sa: (value) => value, sy: (value) => value, r: (value) => value };
 
   /**
    * One call of an instrumented function.
@@ -578,9 +635,11 @@ function createRuntime(require, options) {
      * Logs the call.
      * @param {FunctionInfo} info
      * @param {string} file
-     * @param {unknown[]} args
+     * @param {ArrayLike<unknown>} args
+     * @param {boolean} [external] of a function that isn't traced: `info` is the call's, and
+     *   the arguments are logged by position
      */
-    constructor(info, file, args) {
+    constructor(info, file, args, external = false) {
       const [name, line, column, params] = info;
       const top = stack[stack.length - 1];
       this.info = info;
@@ -598,8 +657,9 @@ function createRuntime(require, options) {
       /** @type {Record<string, unknown>} the `value` returned or `error` thrown, as logged */
       this.outcome = {};
       if (this.muted) return;
-      const site = siteOf();
+      const site = external ? null : siteOf();
       const logged = snapshot((budget) => {
+        if (external) return Array.prototype.map.call(args, (arg) => serialize(arg, 0, [], budget));
         /** @type {Record<string, unknown>} */
         const result = Object.create(null);
         params.forEach((param, i) => {
@@ -607,14 +667,16 @@ function createRuntime(require, options) {
         });
         return result;
       });
-      const shown = logged && typeof logged === 'object'
-        ? Object.entries(logged).map(([param, value]) => `${param}: ${show(value)}`).join(', ')
-        : show(logged);
+      const shown = Array.isArray(logged)
+        ? logged.map(show).join(', ')
+        : logged && typeof logged === 'object'
+          ? Object.entries(logged).map(([param, value]) => `${param}: ${show(value)}`).join(', ')
+          : show(logged);
       const { id, entry } = this;
       write(
-        { type: 'call', id, parent: entry.parent, depth: entry.depth, name, file, line, column, args: logged, ...(site ? { site } : {}), time: time() },
+        { type: 'call', id, parent: entry.parent, depth: entry.depth, name, file, line, column, args: logged, ...(external ? { external } : site ? { site } : {}), time: time() },
         entry.depth,
-        `${name}(${shown}) #${id}  ${where(file)}:${line}${site ? `  (from ${where(site.file)}:${site.line})` : ''}`,
+        `${name}(${shown}) #${id}  ${where(file)}:${line}${external ? '  (not traced)' : site ? `  (from ${where(site.file)}:${site.line})` : ''}`,
       );
     }
 
@@ -733,13 +795,24 @@ function createRuntime(require, options) {
   }
 
   return {
-    load(file, functions) {
+    load(file, functions, calls = []) {
       const top = stack[stack.length - 1];
       const depth = top ? top.depth + 1 : 0;
       if (!top || !top.muted) {
         write({ type: 'load', id: nextId++, parent: top ? top.id : null, depth, file, time: time() }, depth, `load ${where(file)}`);
       }
-      return { enter: (index, args) => (off || busy ? NOOP : new Call(functions[index], file, args)) };
+      return {
+        enter: (index, args) => (off || busy ? NOOP : new Call(functions[index], file, args)),
+        cf: (index, fn) => (typeof fn === 'function' && !traced(fn) ? wrapExternal(calls[index], file, fn, undefined) : fn),
+        // `object[key]` throws as `object.key` would, for `null` or `undefined`
+        cm: (index, object) =>
+          new Proxy({}, {
+            get(_, key) {
+              const fn = object[key];
+              return typeof fn === 'function' ? wrapExternal(calls[index], file, fn, object) : fn;
+            },
+          }),
+      };
     },
   };
 }

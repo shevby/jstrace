@@ -131,6 +131,7 @@ function instrument(project, targets, cwd, output) {
   const accept = filter(config.include, config.exclude);
   const files = [...new Set(rels.flatMap((rel) => collectFiles(project, rel, accept)))].sort();
   const options = { logs: project.logs, root: project.dir, maxDepth: config.maxDepth, maxString: config.maxString, maxLine: config.maxLine, maxRepeat: config.maxRepeat, callSites: config.callSites };
+  const externalCalls = config.externalCalls ? { ignore: config.ignoreCalls } : undefined;
   const manifest = readManifest(project);
   let done = 0;
   let again = 0;
@@ -154,7 +155,7 @@ function instrument(project, targets, cwd, output) {
       }
       let code;
       try {
-        code = instrumentSource(original, { file, options }).code;
+        code = instrumentSource(original, { file, options, externalCalls }).code;
       } catch (error) {
         if (!(error instanceof SyntaxError)) throw error;
         output.err(`${rel}: skipped, it can't be parsed as a CommonJS script (${error.message})`);

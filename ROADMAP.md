@@ -29,10 +29,9 @@ All done; see [DONE.md](DONE.md).
 
 ## 4. Later / maybe
 
-4.1, 4.2, 4.3, 4.5, 4.6, 4.7, 4.10 and 4.12 are done; see [DONE.md](DONE.md).
+4.1, 4.2, 4.3, 4.5, 4.6, 4.7, 4.10, 4.12 and 4.13 are done; see [DONE.md](DONE.md).
 
 - [ ] 4.4 Node's own objects in values (a `Timeout` returned by `setTimeout`, its `TimersList`, sockets) shown as just `[Timeout]`, instead of their internal fields filling a whole line. *(proposed)*
 - [ ] 4.8 Call durations: "took 12 ms" in a call's description (from its `call` and `return` times; async waits included), and a command listing a log's slowest calls. *(proposed)*
 - [ ] 4.9 From code to calls: a CodeLens above each traced function in the editor ("called 12 times, last ← 120") from the selected log; clicking it reveals those calls in the tree. *(proposed)*
 - [ ] 4.11 Copy a value: context-menu commands copying a call's arguments or return value as JSON. *(proposed)*
-- [ ] 4.13 External calls: calls made from instrumented code to functions that aren't traced (built-ins like `JSON.parse` or `arr.map`, Node's `fs.readFileSync`, a package that isn't instrumented) logged as tree nodes too, named by the callee's source text, with their arguments (by position) and outcome, and a callback they run nested inside them. Each call expression in an instrumented file goes through the runtime (`f(a)` → `__jt.cf(id, f, a)`, `o.m(a)` → `__jt.cm(id, o, "m", a)`), which calls a traced function straight through (its source holds `__jtc`) and logs the rest. Not `eval`, `super`, `?.` or tagged templates. In the extension they have Go to Call Site only. *(proposed)*

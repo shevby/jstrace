@@ -214,12 +214,12 @@
       "view/item/context": [
         {
           "command": "jstrace.showInTree",
-          "when": "view == jstrace.searchResults && viewItem =~ /^(call|callSite|load)$/",
+          "when": "view == jstrace.searchResults && viewItem =~ /^(call|callSite|external|load)$/",
           "group": "inline@0"
         },
         {
           "command": "jstrace.showInTree",
-          "when": "view == jstrace.searchResults && viewItem =~ /^(call|callSite|load)$/",
+          "when": "view == jstrace.searchResults && viewItem =~ /^(call|callSite|external|load)$/",
           "group": "0_go@0"
         },
         {
@@ -229,7 +229,7 @@
         },
         {
           "command": "jstrace.showDetails",
-          "when": "view =~ /^jstrace[.](calls|searchResults)$/ && viewItem =~ /^(call|callSite|resume|load|group)$/",
+          "when": "view =~ /^jstrace[.](calls|searchResults)$/ && viewItem =~ /^(call|callSite|external|resume|load|group)$/",
           "group": "inline@2"
         },
         {
@@ -239,12 +239,12 @@
         },
         {
           "command": "jstrace.goToSite",
-          "when": "view =~ /^jstrace[.](calls|searchResults)$/ && viewItem =~ /^(call|callSite|load)$/",
+          "when": "view =~ /^jstrace[.](calls|searchResults)$/ && viewItem =~ /^(call|callSite|external|load)$/",
           "group": "inline@3"
         },
         {
           "command": "jstrace.goToSite",
-          "when": "view =~ /^jstrace[.](calls|searchResults)$/ && viewItem == callSite",
+          "when": "view =~ /^jstrace[.](calls|searchResults)$/ && viewItem =~ /^(callSite|external)$/",
           "group": "0_go@1"
         },
         {
@@ -254,12 +254,12 @@
         },
         {
           "command": "jstrace.showDetails",
-          "when": "view =~ /^jstrace[.](calls|searchResults)$/ && viewItem =~ /^(call|callSite|resume|load|group)$/",
+          "when": "view =~ /^jstrace[.](calls|searchResults)$/ && viewItem =~ /^(call|callSite|external|resume|load|group)$/",
           "group": "1_details@1"
         },
         {
           "command": "jstrace.expandAll",
-          "when": "view == jstrace.calls && viewItem =~ /^(project|log|call|callSite|resume|load|group)$/",
+          "when": "view == jstrace.calls && viewItem =~ /^(project|log|call|callSite|external|resume|load|group)$/",
           "group": "1_details@2"
         },
         {
@@ -269,7 +269,7 @@
         },
         {
           "submenu": "jstrace.step",
-          "when": "view =~ /^jstrace[.](calls|searchResults)$/ && viewItem =~ /^(log|call|callSite|resume|load|group)$/",
+          "when": "view =~ /^jstrace[.](calls|searchResults)$/ && viewItem =~ /^(log|call|callSite|external|resume|load|group)$/",
           "group": "0_go@9"
         }
       ],

@@ -15,14 +15,15 @@ const { readLogs } = require('../../test/helpers');
  * @param {import('node:test').TestContext} t
  * @param {string} source
  * @param {import('./runtime').RuntimeOptions} [options] besides `logs` (`<temp>/logs`) and `root`
+ * @param {{ ignore: string[] }} [externalCalls]
  * @returns {Promise<{ dir: string, logs: string, exports: unknown }>}
  */
-async function run(t, source, options = {}) {
+async function run(t, source, options = {}, externalCalls) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jstrace-runtime-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const logs = path.join(dir, 'logs');
   // Run through `new Function`, its stack frames have no file, so call sites are tested in a child process.
-  const { code } = instrumentSource(source, { file: path.join(dir, 'x.js'), options: { logs, root: dir, callSites: false, ...options } });
+  const { code } = instrumentSource(source, { file: path.join(dir, 'x.js'), options: { logs, root: dir, callSites: false, ...options }, externalCalls });
   delete (/** @type {any} */ (globalThis).__jt);
   const module = { exports: /** @type {unknown} */ ({}) };
   new Function('require', 'module', 'exports', code)(require, module, module.exports);
@@ -36,10 +37,11 @@ async function run(t, source, options = {}) {
  * @param {import('node:test').TestContext} t
  * @param {string} source
  * @param {import('./runtime').RuntimeOptions} [options]
+ * @param {{ ignore: string[] }} [externalCalls]
  * @returns {Promise<import('../../test/helpers').Log & { dir: string }>}
  */
-async function trace(t, source, options) {
-  const { dir, logs } = await run(t, source, options);
+async function trace(t, source, options, externalCalls) {
+  const { dir, logs } = await run(t, source, options, externalCalls);
   const found = readLogs(logs);
   assert.equal(found.length, 1);
   return { dir, ...found[0] };
@@ -244,6 +246,48 @@ test('past maxRepeat, the resumes of a generator are counted, not logged, and it
     '    … count() resumed 3 more times, not logged  x.js:1',
     '    ← 9',
     '  ← 5',
+  ]);
+});
+
+test('external calls are logged by position, with the traced calls they make inside them', async (t) => {
+  const { events, tree } = await trace(
+    t,
+    `function double(x) { return x * 2; }
+function run(list) { return list.map(double).join(','); }
+const parsed = JSON.parse('[1,2]');
+run(parsed);
+const fails = new Function('throw new Error("no")');
+function loop() { try { fails(); } catch (e) {} for (let i = 0; i < 3; i++) String(i); Number(1); }
+loop();`,
+    { maxRepeat: 2 },
+    { ignore: ['Number'] },
+  );
+  assert.deepEqual(tree.slice(1), [
+    'load x.js',
+    'JSON.parse("[1,2]") #2  x.js:3  (not traced)',
+    '  ← [1,2]',
+    'run(list: [1,2]) #3  x.js:2',
+    '  list.map("[Function double]") #4  x.js:2  (not traced)',
+    '    double(x: 1) #5  x.js:1',
+    '      ← 2',
+    '    double(x: 2) #6  x.js:1',
+    '      ← 4',
+    '    ← [2,4]',
+    '  list.map().join(",") #7  x.js:2  (not traced)',
+    '    ← "2,4"',
+    '  ← "2,4"',
+    'loop() #8  x.js:6',
+    '  fails() #9  x.js:6  (not traced)',
+    '    ← throws "[Error: no]"',
+    '  String(0) #10  x.js:6  (not traced)',
+    '    ← "0"',
+    '  String(1) #11  x.js:6  (not traced)',
+    '    ← "1"',
+    '  … String() called 1 more time, not logged  x.js:6',
+    '  ← undefined',
+  ]);
+  assert.deepEqual(stable(events.filter((event) => event.id === 7)), [
+    { type: 'call', id: 7, parent: 3, depth: 1, name: 'list.map().join', line: 2, column: 45, args: [','], external: true },
   ]);
 });
 

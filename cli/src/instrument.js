@@ -81,14 +81,21 @@ function literal(value) {
  * @param {RuntimeOptions & Record<string, unknown>} [context.options] passed on to the runtime
  * @param {Function} [context.runtime] the runtime factory to embed; `createRuntime` unless a
  *   test passes its own (self-contained, as `createRuntime` is)
- * @returns {{ code: string, functions: FunctionInfo[] }} the instrumented source, and the
- *   metadata of its functions
+ * @param {{ ignore: string[] }} [context.externalCalls] when given, calls go through the
+ *   runtime too, to log those of functions that aren't traced (4.13), but for callees named
+ *   as `ignore`'s patterns say (`*` for anything)
+ * @returns {{ code: string, functions: FunctionInfo[], calls: FunctionInfo[] }} the
+ *   instrumented source, the metadata of its functions, and that of the calls going through
+ *   the runtime (the callee's name and where it is, with no parameters)
  * @throws {SyntaxError} when the source can't be parsed as a script
  */
-function instrumentSource(source, { file, options = {}, runtime = createRuntime }) {
+function instrumentSource(source, { file, options = {}, runtime = createRuntime, externalCalls }) {
   const program = parse(source);
   /** @type {FunctionInfo[]} */
   const functions = [];
+  /** @type {FunctionInfo[]} */
+  const calls = [];
+  const ignored = externalCalls && patterns(externalCalls.ignore);
   /** @type {Insertion[]} */
   const insertions = [];
   /**
@@ -138,19 +145,116 @@ function instrumentSource(source, { file, options = {}, runtime = createRuntime 
         insert(node.end, ' __jtc.sy()', depth + 0.5, true);
       }
       insert(node.end, ')', depth, true);
+    } else if (node.type === 'CallExpression' && ignored) {
+      const how = callForm(node, parents);
+      const name = how && calleeName(node.callee);
+      if (!how || !name || ignored.test(name)) return;
+      const at = how === 'method' ? node.callee.property.loc.start : node.callee.loc.start;
+      insert(node.callee.start, `__jtm.${how === 'method' ? 'cm' : 'cf'}(${calls.length},`, depth, false);
+      insert(how === 'method' ? node.callee.object.end : node.callee.end, ')', depth + 0.5, true);
+      calls.push([name, at.line, at.column, []]);
     }
   });
 
   const factory = `return (${compact(runtime)})(require, options);`;
   const prelude =
     `;var __jt=globalThis.__jt||(globalThis.__jt=new Function("require","options",${literal(factory)})(require,${literal(options)}));` +
-    `${MARKER}${literal(file)},${literal(functions)});`;
+    `${MARKER}${literal(file)},${literal(functions)}${calls.length > 0 ? `,${literal(calls)}` : ''});`;
   current = null;
   insert(preludePosition(program, source), prelude, -1, false);
 
   const code = apply(source, insertions);
   check(source, code, file);
-  return { code, functions };
+  return { code, functions, calls };
+}
+
+/**
+ * How a call goes through the runtime: `f(a)` as `__jtm.cf(i,f)(a)`, which gives back `f`
+ * itself when it's traced and else a function logging the call; `o.m(a)` (or `o[k](a)`) as
+ * `__jtm.cm(i,o).m(a)`, a proxy giving the same for `o.m`, called with `o` as `this`. So
+ * nothing but insertions is needed, and everything is evaluated once, in the same order.
+ * Left alone, as they'd change meaning: an optional chain (it would no longer stop at
+ * `null`), `super`, a private method, direct `eval`, and `(o.m)(a)` (which keeps `this`); and
+ * an inline function or class, as it's traced or throws anyway.
+ * @param {AnyNode} call a `CallExpression`
+ * @param {AnyNode[]} parents its ancestors
+ * @returns {'function' | 'method' | null}
+ */
+function callForm(call, parents) {
+  /** @type {AnyNode} */
+  let child = call;
+  for (let i = parents.length - 1; i >= 0; i--) {
+    const parent = parents[i];
+    if (parent.type === 'ChainExpression') return null;
+    if (!(parent.type === 'MemberExpression' && parent.object === child) && !(parent.type === 'CallExpression' && parent.callee === child)) break;
+    child = parent;
+  }
+  const callee = call.callee;
+  if (callee.type === 'MemberExpression') {
+    return callee.object.type === 'Super' || callee.property.type === 'PrivateIdentifier' ? null : 'method';
+  }
+  if (callee.type === 'Identifier' && callee.name === 'eval') return null;
+  let inner = callee;
+  while (inner.type === 'ParenthesizedExpression') inner = inner.expression;
+  if (['Super', 'MemberExpression', 'ChainExpression', 'ClassExpression'].includes(inner.type) || FUNCTION_TYPES.has(inner.type)) return null;
+  return 'function';
+}
+
+/** The longest name a callee gets, before it's cut. */
+const MAX_CALLEE = 100;
+
+/**
+ * A callee as an external call's name: `fs.readFileSync`, `this.items.push`, `fetch().then`,
+ * `list[0]`; what's too long to show (a function, an array) is `…`.
+ * @param {AnyNode} node
+ * @returns {string}
+ */
+function calleeName(node) {
+  const name = calleeText(node);
+  return name.length > MAX_CALLEE ? `${name.slice(0, MAX_CALLEE - 1)}…` : name;
+}
+
+/**
+ * `calleeName`, uncut.
+ * @param {AnyNode} node
+ * @returns {string}
+ */
+function calleeText(node) {
+  switch (node.type) {
+    case 'Identifier':
+      return node.name;
+    case 'ThisExpression':
+      return 'this';
+    case 'MemberExpression': {
+      const dot = node.optional ? '?.' : '.';
+      if (!node.computed) return `${calleeText(node.object)}${dot}${node.property.name}`;
+      const key = node.property.type === 'Literal' && node.property.raw.length <= 20 ? node.property.raw : '…';
+      return `${calleeText(node.object)}${node.optional ? '?.' : ''}[${key}]`;
+    }
+    case 'CallExpression':
+      return `${calleeText(node.callee)}()`;
+    case 'NewExpression':
+      return `new ${calleeText(node.callee)}()`;
+    case 'ParenthesizedExpression':
+      return `(${calleeText(node.expression)})`;
+    case 'ChainExpression':
+      return calleeText(node.expression);
+    case 'Literal':
+      return node.raw.length <= 20 ? node.raw : '…';
+    default:
+      return '…';
+  }
+}
+
+/**
+ * Name patterns as one regular expression, `*` standing for anything.
+ * @param {string[]} list
+ * @returns {RegExp}
+ */
+function patterns(list) {
+  const escape = (/** @type {string} */ text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const sources = list.map((pattern) => pattern.split('*').map(escape).join('.*'));
+  return new RegExp(`^(?:${sources.join('|') || '(?!)'})$`);
 }
 
 /** @type {WeakMap<Function, string>} */

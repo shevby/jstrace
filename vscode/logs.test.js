@@ -83,6 +83,24 @@ test('labels, descriptions and hovers read like the .txt tree', () => {
   assert.match(logs.nodeTooltip(ticks.roots[0], ROOT), /^````json$/m, "a value's backticks can't close the code block");
 });
 
+test('an external call shows its arguments by position, and that it is not traced', () => {
+  const trace = logs.parseLog(
+    [
+      { type: 'call', id: 1, parent: null, depth: 0, name: 'fs.readFileSync', file: file('a.js'), line: 2, column: 3, args: ['x.txt', 'utf8'], external: true, time: 1 },
+      { type: 'return', call: 1, parent: 1, value: 'text', time: 2 },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join('\n'),
+  );
+  const [call] = trace.roots;
+  assert.equal(logs.nodeLabel(call, ROOT), 'fs.readFileSync("x.txt", "utf8")');
+  assert.deepEqual(logs.search(trace, 'readfile utf8 a.js:2', ROOT), [call]);
+  assert.match(logs.nodeTooltip(call, ROOT), /Not traced .*: called here/);
+  const { text } = logs.nodeDetails(call, ROOT);
+  assert.match(text, /\/\/ Not traced/);
+  assert.match(text, /"arguments": \[\n {4}"x\.txt",/);
+});
+
 test('rows group the calls of a function, with those not logged', () => {
   const call = (/** @type {number} */ id, /** @type {string} */ name, /** @type {number} */ line, /** @type {object} */ more = {}) =>
     ({ type: 'call', id, parent: 1, depth: 1, name, file: file('a.js'), line, column: 0, args: { id }, ...more });

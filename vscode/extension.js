@@ -202,8 +202,9 @@ class CallsProvider {
     item.iconPath =
       end?.type === 'throw'
         ? new vscode.ThemeIcon('error', new vscode.ThemeColor('errorForeground'))
-        : new vscode.ThemeIcon(event.type === 'load' ? 'file-code' : event.type === 'resume' ? 'debug-continue' : 'symbol-function');
-    item.contextValue = event.type === 'call' && event.site ? 'callSite' : event.type;
+        : new vscode.ThemeIcon(event.type === 'load' ? 'file-code' : event.type === 'resume' ? 'debug-continue' : event.external ? 'link-external' : 'symbol-function');
+    // an external call (4.13) is logged where it was made, with no function to go to
+    item.contextValue = event.type === 'call' && event.external ? 'external' : event.type === 'call' && event.site ? 'callSite' : event.type;
     item.command =
       event.type === 'resume'
         ? { title: 'Show the call', command: 'jstrace.showCall', arguments: [element] }

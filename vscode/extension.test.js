@@ -6,7 +6,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const Module = require('node:module');
 const path = require('node:path');
-const { copyFixture } = require('../test/helpers');
+const { APP_OUTPUT, copyFixture } = require('../test/helpers');
 
 /**
  * Just enough of the `vscode` API for the extension to activate and its tree and commands
@@ -249,6 +249,28 @@ test('the extension injects, shows the call trees, jumps to code, restores and c
   await fake.commands['jstrace.clearLogs']();
   assert.deepEqual(fake.messages.slice(1), ['warning: Delete 2 jstrace logs?']);
   assert.deepEqual(provider.getChildren(), []);
+});
+
+test('with externalCalls, calls of functions that are not traced show where they were made', async (t) => {
+  const dir = copyFixture(t, 'app');
+  fs.writeFileSync(path.join(dir, 'jstrace.config.json'), '{ "externalCalls": true }');
+  const fake = activate(dir);
+  const provider = fake.provider();
+  await fake.commands['jstrace.inject']({ fsPath: dir, scheme: 'file' }, [{ fsPath: dir, scheme: 'file' }]);
+  const stdout = execFileSync(process.execPath, ['index.js'], { cwd: dir, encoding: 'utf8' });
+  assert.equal(stdout, APP_OUTPUT);
+
+  const app = provider.getChildren().find((/** @type {any} */ item) => provider.getTreeItem(item).label === 'index.js');
+  const main = provider.getChildren(app).find((/** @type {any} */ item) => item.node?.event.name === 'main');
+  const calls = provider.getChildren(main);
+  assert.ok(!calls.some((/** @type {any} */ item) => item.node?.event.name === 'lines.push'), 'ignored by default');
+  const sort = calls.find((/** @type {any} */ item) => item.node?.event.name === 'shapes.sort');
+  const item = provider.getTreeItem(sort);
+  assert.deepEqual([item.label, item.contextValue, item.iconPath.id], ['shapes.sort("[Function compare]")', 'external', 'link-external']);
+  assert.ok(provider.getChildren(sort).some((/** @type {any} */ inner) => inner.node?.event.name === 'Shape->compare'), 'the traced callback runs inside it');
+  await fake.commands[item.command.command](...item.command.arguments);
+  const line = fs.readFileSync(path.join(dir, '.jstrace', 'backup', 'index.js'), 'utf8').split('\n')[36];
+  assert.deepEqual(JSON.parse(JSON.stringify(fake.opened.pop().options.selection.start)), { line: 36, character: line.indexOf('sort(') }, 'on the callee, as in the original');
 });
 
 test('the tree follows a log as it is written, keeping its items', (t) => {
