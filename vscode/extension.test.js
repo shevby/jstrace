@@ -24,6 +24,8 @@ function fakeVscode(dir) {
   const revealed = [];
   /** @type {any[]} */
   const opened = [];
+  /** @type {Record<string, any>} the content providers, by scheme */
+  const contents = {};
   const folder = { name: path.basename(dir), index: 0, uri: { fsPath: dir, scheme: 'file' } };
   /** @param {string} kind */
   const message = (kind) => async (/** @type {string} */ text, /** @type {any[]} */ ...rest) => {
@@ -69,17 +71,24 @@ function fakeVscode(dir) {
         Object.assign(this, { start, end });
       }
     },
-    Uri: { file: (/** @type {string} */ fsPath) => ({ fsPath, scheme: 'file' }) },
+    Uri: {
+      file: (/** @type {string} */ fsPath) => ({ fsPath, scheme: 'file' }),
+      from: (/** @type {any} */ parts) => ({ ...parts, fsPath: parts.path, toString: () => `${parts.scheme}:${parts.path}?${parts.query}` }),
+    },
+    ViewColumn: { Beside: -2 },
+    languages: { setTextDocumentLanguage: async (/** @type {any} */ document, /** @type {string} */ language) => ({ ...document, language }) },
     window: {
       createTreeView: (/** @type {string} */ id, /** @type {any} */ options) => {
         provider = options.treeDataProvider;
-        return { reveal: async (/** @type {any} */ item) => void revealed.push(item), dispose() {} };
+        return { reveal: async (/** @type {any} */ item) => void revealed.push(item), selection: [], dispose() {} };
       },
+      withProgress: (/** @type {any} */ options, /** @type {() => Promise<void>} */ task) => task(),
       createOutputChannel: () => ({ append() {}, appendLine() {}, show() {}, dispose() {} }),
       showInformationMessage: message('info'),
       showWarningMessage: message('warning'),
       showErrorMessage: message('error'),
-      showTextDocument: async (/** @type {any} */ document, /** @type {any} */ options) => void opened.push({ file: document.fsPath, options }),
+      showTextDocument: async (/** @type {any} */ document, /** @type {any} */ options) =>
+        void opened.push({ file: document.fsPath, text: document.text, language: document.language, options }),
       activeTextEditor: undefined,
     },
     workspace: {
@@ -89,7 +98,15 @@ function fakeVscode(dir) {
       createFileSystemWatcher: () => ({ onDidCreate() {}, onDidDelete() {}, dispose() {} }),
       onDidChangeWorkspaceFolders: () => ({ dispose() {} }),
       onDidChangeConfiguration: () => ({ dispose() {} }),
-      openTextDocument: async (/** @type {any} */ uri) => ({ fsPath: uri.fsPath, validatePosition: (/** @type {any} */ position) => position }),
+      openTextDocument: async (/** @type {any} */ uri) => ({
+        fsPath: uri.fsPath,
+        text: contents[uri.scheme]?.provideTextDocumentContent(uri),
+        validatePosition: (/** @type {any} */ position) => position,
+      }),
+      registerTextDocumentContentProvider: (/** @type {string} */ scheme, /** @type {any} */ provider) => {
+        contents[scheme] = provider;
+        return { dispose() {} };
+      },
     },
     commands: {
       registerCommand: (/** @type {string} */ name, /** @type {(...args: any[]) => any} */ handler) => {
@@ -149,6 +166,21 @@ test('the extension injects, shows the call trees, jumps to code, restores and c
   assert.match(provider.resolveTreeItem(item, factorial).tooltip.value, /Returned:/);
   await fake.commands[item.command.command](...item.command.arguments);
   assert.deepEqual(JSON.parse(JSON.stringify(fake.opened.pop())), { file: path.join(dir, 'lib', 'math.js'), options: { selection: { start: { line: 6, character: 0 }, end: { line: 6, character: 0 } } } }, 'the editor takes the focus, to show its cursor');
+
+  await fake.commands['jstrace.showDetails'](factorial);
+  const shown = fake.opened.pop();
+  assert.deepEqual([shown.file, shown.language, shown.options], ['/factorial #9.jsonc', 'jsonc', { preview: true, viewColumn: -2 }]);
+  assert.match(shown.text, /^\/\/ factorial\(n: 5\) {2}#9\n[^]*"returned": 120/);
+  await fake.commands['jstrace.showDetails'](provider.getChildren(app)[0]);
+  assert.match(fake.opened.pop().text, /^\/\/ load index\.js/);
+
+  fake.revealed.length = 0;
+  await fake.commands['jstrace.expandAll'](main);
+  const labels = fake.revealed.map((/** @type {any} */ item) => provider.getTreeItem(item).label);
+  assert.equal(labels[0], 'main()');
+  assert.ok(labels.includes('factorial(n: 2)'), 'the deepest calls are expanded');
+  assert.ok(!labels.includes('factorial(n: 1)'), 'what has nothing under it is left alone');
+  fake.revealed.length = 0;
 
   const divide = provider.getChildren(calls.find((/** @type {any} */ item) => item.node.event.name === 'safeDivide'))[0];
   assert.equal(provider.getTreeItem(divide).iconPath.id, 'error');

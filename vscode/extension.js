@@ -334,6 +334,10 @@ function activate(context) {
   const provider = new CallsProvider();
   const view = vscode.window.createTreeView('jstrace.calls', { treeDataProvider: provider, showCollapseAll: true });
   const output = vscode.window.createOutputChannel('jstrace');
+  /** @type {Map<string, string>} the details tabs' contents, by URI */
+  const details = new Map();
+  /** @type {vscode.EventEmitter<vscode.Uri>} */
+  const detailsChanged = new vscode.EventEmitter();
 
   /** @type {NodeJS.Timeout | undefined} */
   let pending;
@@ -459,6 +463,53 @@ function activate(context) {
         const event = element.node.event;
         if (call) await view.reveal(provider.nodeItem(element.log, call), { select: true, focus: false });
         await vscode.commands.executeCommand('jstrace.open', event.file, event.line, event.column);
+      },
+    ),
+
+    vscode.workspace.registerTextDocumentContentProvider('jstrace', {
+      onDidChange: detailsChanged.event,
+      provideTextDocumentContent: (uri) => details.get(uri.toString()) ?? '',
+    }),
+    detailsChanged,
+
+    vscode.commands.registerCommand(
+      'jstrace.showDetails',
+      /**
+       * Opens a read-only tab beside with a call's (or a group's) details, as `jsonc`.
+       * @param {Item} [element] the selected item, from the command palette
+       */
+      async (element = view.selection[0]) => {
+        if (element?.kind !== 'node' && element?.kind !== 'group') {
+          return void vscode.window.showInformationMessage('jstrace: select a call in the Calls view to see its details.');
+        }
+        const { name, text } = element.kind === 'node' ? logs.nodeDetails(element.node, element.log.root) : logs.groupDetails(element.row, element.log.root);
+        const key = element.kind === 'node' ? element.node.event.id : element.id;
+        const uri = vscode.Uri.from({ scheme: 'jstrace', path: `/${name}`, query: `${element.log.file}#${key}` });
+        details.set(uri.toString(), text);
+        detailsChanged.fire(uri);
+        const document = await vscode.languages.setTextDocumentLanguage(await vscode.workspace.openTextDocument(uri), 'jsonc');
+        await vscode.window.showTextDocument(document, { preview: true, viewColumn: vscode.ViewColumn.Beside });
+      },
+    ),
+
+    vscode.commands.registerCommand(
+      'jstrace.expandAll',
+      /**
+       * Expands an item and everything under it, level by level.
+       * @param {Item} [element] the selected item, from the command palette
+       */
+      async (element = view.selection[0]) => {
+        if (!element) return;
+        await vscode.window.withProgress({ location: { viewId: 'jstrace.calls' } }, async () => {
+          /** @type {Item[]} */
+          const queue = [element];
+          for (let item = queue.shift(); item; item = queue.shift()) {
+            const children = provider.getChildren(item);
+            if (children.length === 0) continue;
+            await view.reveal(item, { expand: true, select: item === element, focus: item === element });
+            queue.push(...children);
+          }
+        });
       },
     ),
 

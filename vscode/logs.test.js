@@ -113,6 +113,57 @@ test('rows group the calls of a function, with those not logged', () => {
   assert.match(logs.rowTooltip({ kind: 'skip', event: resumes, key: '' }, ROOT), /resumed 4 more times here, not logged/);
 });
 
+test('details show where and when a call ran, its arguments and how it ended', () => {
+  const trace = logs.parseLog(LOG);
+  const [load, resume, ids] = trace.roots;
+  const [divide, later] = load.children[0].children;
+
+  const thrown = logs.nodeDetails(divide, ROOT);
+  assert.equal(thrown.name, 'divide #3.jsonc');
+  const lines = thrown.text.split('\n');
+  assert.deepEqual(lines.slice(0, 4), [
+    '// divide(a: 1, b: 0)  #3',
+    `// src/app.js:9  (${file('src/app.js')})`,
+    '// called at 2 ms, took 1 ms',
+    '// in: load src/app.js → main() #2 → divide() #3',
+  ]);
+  assert.deepEqual(JSON.parse(lines.slice(4).join('\n')), { arguments: { a: 1, b: 0 }, threw: '[Error: division by zero]' });
+
+  const part = logs.nodeDetails(resume, ROOT);
+  assert.equal(part.name, 'later #4.jsonc', 'a resume shows its call');
+  assert.match(part.text, /^\/\/ resumed 1 time: #5$/m);
+  assert.match(part.text, /^\/\/ this part: ↻ #5 at 6 ms, in: ↻ later\(\) #4$/m);
+  assert.deepEqual(JSON.parse(part.text.replace(/^\/\/.*\n/gm, '')), { arguments: { value: 'x' }, returned: 'X' });
+  assert.equal(logs.nodeDetails(later, ROOT).text, part.text.replace(/^\/\/ this part.*\n/m, ''));
+
+  const generator = logs.nodeDetails(ids, ROOT);
+  assert.match(generator.text, /still running when the log ended/);
+  assert.deepEqual(JSON.parse(generator.text.replace(/^\/\/.*\n/gm, '')), { arguments: { count: 1 }, yielded: ['id1'] });
+  assert.match(logs.nodeDetails(load, ROOT).text, /^\/\/ load src\/app\.js {2}#1\n/);
+
+  const anonymous = logs.parseLog(JSON.stringify({ type: 'call', id: 1, parent: null, name: '<anonymous@1:2>', file: file('a.js'), line: 1, column: 1, args: {} }));
+  assert.equal(logs.nodeDetails(anonymous.roots[0], ROOT).name, '_anonymous@1_2_ #1.jsonc');
+});
+
+test('a group details each of its calls', () => {
+  const call = (/** @type {number} */ id, /** @type {number} */ n) => ({ type: 'call', id, parent: null, depth: 0, name: 'sq', file: file('a.js'), line: 3, column: 0, args: { n } });
+  const trace = logs.parseLog(
+    [
+      call(1, 1), { type: 'return', call: 1, parent: 1, value: 1 }, call(2, 2), { type: 'throw', call: 2, parent: 2, error: 'no' },
+      { type: 'skip', parent: null, name: 'sq', file: file('a.js'), line: 3, column: 0, count: 5 },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join('\n'),
+  );
+  const { name, text } = logs.groupDetails(logs.rows(trace.roots, trace.skips, 5)[0], ROOT);
+  assert.equal(name, 'sq ×7.jsonc');
+  assert.match(text, /^\/\/ sq\(\) ×7: 2 logged, 5 not \(past maxRepeat\)\n/);
+  assert.deepEqual(JSON.parse(text.replace(/^\/\/.*\n/gm, '')), [
+    { call: 1, arguments: { n: 1 }, returned: 1 },
+    { call: 2, arguments: { n: 2 }, threw: 'no' },
+  ]);
+});
+
 test('relativePath keeps a path outside the project as it is', () => {
   assert.equal(logs.relativePath(ROOT, file('a/b.js')), 'a/b.js');
   const outside = path.resolve('/elsewhere/c.js');

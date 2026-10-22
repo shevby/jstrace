@@ -22,6 +22,7 @@ const MAX_LABEL = 120;
  * @property {Record<string, any>} [end] the `return`, `throw` or `yield` that ended this node
  * @property {Record<string, any>} [outcome] for a call, its `return` or `throw`, wherever it happened
  * @property {TraceNode[]} resumes for a call, the nodes it went on in after suspending
+ * @property {TraceNode} [call] for a resume, the call it's a part of
  * @property {Record<string, any>[]} skips the `skip` events in it: calls past `maxRepeat`, not logged
  */
 
@@ -72,7 +73,10 @@ function parseLog(text) {
       const node = { event, parent, children: [], resumes: [], skips: [] };
       trace.nodes.set(event.id, node);
       (parent ? parent.children : trace.roots).push(node);
-      if (event.type === 'resume') trace.nodes.get(event.call)?.resumes.push(node);
+      if (event.type === 'resume') {
+        node.call = trace.nodes.get(event.call);
+        node.call?.resumes.push(node);
+      }
     } else if (event.type === 'return' || event.type === 'throw' || event.type === 'yield') {
       const node = trace.nodes.get(event.parent);
       if (node) node.end = event;
@@ -376,8 +380,113 @@ function rowTooltip(row, root) {
   return lines.join('\n\n');
 }
 
+/**
+ * How an end event ended a node, as details: `returned`, `threw` or `yielded`.
+ * @param {Record<string, any> | undefined} end a `return`, `throw` or `yield`
+ * @returns {Record<string, unknown>} empty for none
+ */
+function endData(end) {
+  if (!end) return {};
+  if (end.type === 'throw') return { threw: end.error };
+  return { [end.type === 'yield' ? 'yielded' : 'returned']: end.value === undefined ? '[undefined]' : end.value };
+}
+
+/**
+ * The calls a node ran in, outermost first: `main() #7 → factorial() #9`.
+ * @param {TraceNode} node
+ * @param {string} root the project folder
+ * @returns {string}
+ */
+function stackOf(node, root) {
+  /** @type {string[]} */
+  const names = [];
+  for (let at = /** @type {TraceNode | undefined} */ (node); at; at = at.parent) {
+    const event = at.event;
+    names.unshift(
+      event.type === 'load' ? `load ${relativePath(root, event.file)}` : event.type === 'resume' ? `↻ ${event.name}() #${event.call}` : `${event.name}() #${event.id}`,
+    );
+  }
+  return names.join(' → ');
+}
+
+/**
+ * A file name for a details tab, without the characters file systems refuse.
+ * @param {string} text
+ * @returns {string}
+ */
+function fileName(text) {
+  return text.replace(/[\\/:*?"<>|]/g, '_');
+}
+
+/**
+ * The details of a node, for a read-only tab: comments about the call (where, when, how
+ * long, the calls it ran in, its resumes), then its arguments and how it ended as JSON. A
+ * resume shows its call's details. Values are those logged, pretty-printed.
+ * @param {TraceNode} node
+ * @param {string} root the project folder
+ * @returns {{ name: string, text: string }} the tab's name (`.jsonc`) and content
+ */
+function nodeDetails(node, root) {
+  const event = node.event;
+  if (event.type === 'load') {
+    const lines = [
+      `// load ${relativePath(root, event.file)}  #${event.id}`,
+      `// ${event.file}`,
+      `// at ${event.time} ms; its top-level code made ${node.children.length} calls logged in it`,
+    ];
+    return { name: fileName(`load ${path.basename(event.file)} #${event.id}.jsonc`), text: lines.join('\n') + '\n' };
+  }
+  const call = event.type === 'resume' ? node.call : node;
+  const head = call?.event ?? event;
+  const lines = [`// ${call ? nodeLabel(call, root) : `${event.name}()`}  #${head.type === 'resume' ? head.call : head.id}`];
+  lines.push(`// ${relativePath(root, event.file)}:${event.line}  (${event.file})`);
+  if (call) {
+    const outcome = call.outcome;
+    const took = outcome ? `took ${Math.round((outcome.time - call.event.time) * 1000) / 1000} ms` : 'still running when the log ended';
+    lines.push(`// called at ${call.event.time} ms, ${took}`);
+    lines.push(`// in: ${stackOf(call, root)}`);
+    if (call.resumes.length > 0) lines.push(`// resumed ${call.resumes.length} ${call.resumes.length === 1 ? 'time' : 'times'}: ${call.resumes.map((part) => `#${part.event.id}`).join(', ')}`);
+  }
+  if (event.type === 'resume') lines.push(`// this part: ↻ #${event.id} at ${event.time} ms, in: ${stackOf(node, root)}`);
+  /** @type {Record<string, unknown>} */
+  const data = {};
+  if (call) {
+    data.arguments = call.event.args ?? {};
+    const yields = [call, ...call.resumes].map((part) => part.end).filter((end) => end?.type === 'yield');
+    if (yields.length > 0) data.yielded = yields.map((end) => (end?.value === undefined ? '[undefined]' : end.value));
+    Object.assign(data, call.outcome ? endData(call.outcome) : {});
+  } else {
+    Object.assign(data, endData(node.end));
+  }
+  const id = event.type === 'resume' ? event.call : event.id;
+  return { name: fileName(`${event.name} #${id}.jsonc`), text: `${lines.join('\n')}\n${JSON.stringify(data, null, 2)}\n` };
+}
+
+/**
+ * The details of a group, for a read-only tab: each of its calls (or resumes) with its
+ * arguments and how it ended, and how many weren't logged.
+ * @param {Row} row a group
+ * @param {string} root the project folder
+ * @returns {{ name: string, text: string }} the tab's name (`.jsonc`) and content
+ */
+function groupDetails(row, root) {
+  const event = row.event;
+  const nodes = row.nodes ?? [];
+  const lines = [`// ${groupLabel(row)}${row.skip ? `: ${nodes.length} logged, ${row.skip.count} not (past maxRepeat)` : ''}`];
+  lines.push(`// ${relativePath(root, event.file)}:${event.line}  (${event.file})`);
+  if (nodes[0]?.parent) lines.push(`// in: ${stackOf(nodes[0].parent, root)}`);
+  const items = nodes.map((node) =>
+    node.event.type === 'resume'
+      ? { resume: node.event.id, call: node.event.call, ...endData(node.end) }
+      : { call: node.event.id, arguments: node.event.args ?? {}, ...endData(node.outcome ?? node.end) },
+  );
+  return { name: fileName(`${event.name} ×${nodes.length + (row.skip?.count ?? 0)}.jsonc`), text: `${lines.join('\n')}\n${JSON.stringify(items, null, 2)}\n` };
+}
+
 module.exports = {
   parseLog,
+  nodeDetails,
+  groupDetails,
   rows,
   groupLabel,
   groupDescription,
