@@ -13,7 +13,6 @@ Section names in parentheses (Architecture, Glossary, …) refer to [CLAUDE.md](
 
 ## 0. Foundation
 
-- [ ] 0.2 Project skeleton: root npm workspace over `cli/` and `vscode/`, the `jstrace` bin, `node --test`, `npm run check`.
 - [ ] 0.3 JSDoc, `jsconfig.json` (`checkJs`), and `npm run typecheck` (TypeScript as a dev-only checker; `@types/node`, `@types/vscode`).
 - [ ] 0.4 Test fixtures (`test/fixtures/`): a small CommonJS app with plain functions, classes (getters/setters, constructors), arrows and callbacks, async/await, a generator, a package in `node_modules`, a file acorn can't parse, and a child process.
 

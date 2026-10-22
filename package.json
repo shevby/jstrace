@@ -1,0 +1,19 @@
+{
+  "name": "jstrace-workspace",
+  "version": "0.1.0",
+  "description": "Traces function calls in CommonJS code; a CLI instrumenter and a VSCode extension to browse the logs.",
+  "license": "MIT",
+  "author": "Bohdan Shevchenko",
+  "private": true,
+  "workspaces": [
+    "cli",
+    "vscode"
+  ],
+  "scripts": {
+    "test": "node --test \"cli/**/*.test.js\" \"vscode/**/*.test.js\" \"test/*.test.js\"",
+    "check": "npm test"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
