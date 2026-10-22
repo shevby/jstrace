@@ -29,9 +29,8 @@ All done; see [DONE.md](DONE.md).
 
 ## 4. Later / maybe
 
-4.1, 4.2, 4.5, 4.6, 4.7 and 4.12 are done; see [DONE.md](DONE.md).
+4.1, 4.2, 4.3, 4.5, 4.6, 4.7 and 4.12 are done; see [DONE.md](DONE.md).
 
-- [ ] 4.3 Search and filter in the tree view (by function name or file). *(proposed)*
 - [ ] 4.4 Node's own objects in values (a `Timeout` returned by `setTimeout`, its `TimersList`, sockets) shown as just `[Timeout]`, instead of their internal fields filling a whole line. *(proposed)*
 - [ ] 4.8 Call durations: "took 12 ms" in a call's description (from its `call` and `return` times; async waits included), and a command listing a log's slowest calls. *(proposed)*
 - [ ] 4.9 From code to calls: a CodeLens above each traced function in the editor ("called 12 times, last ← 120") from the selected log; clicking it reveals those calls in the tree. *(proposed)*
