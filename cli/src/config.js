@@ -33,7 +33,7 @@ const DEFAULTS = Object.freeze({
   ignoreCalls: [
     'require', 'console.*', 'Math.*', 'Object.*', 'Number.*', 'Array.isArray', 'String', 'Number', 'Boolean', 'Symbol',
     'parseInt', 'parseFloat', 'isNaN', '*.push', '*.pop', '*.shift', '*.unshift', '*.call', '*.apply', '*.bind',
-    '*.hasOwnProperty', '*.toString',
+    '*.hasOwnProperty', '*.toString', 'setTimeout', 'setInterval', 'setImmediate',
   ],
 });
 
