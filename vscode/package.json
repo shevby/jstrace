@@ -83,6 +83,18 @@
         "icon": "$(expand-all)"
       },
       {
+        "command": "jstrace.goToSite",
+        "title": "Go to Call Site",
+        "category": "jstrace",
+        "icon": "$(call-incoming)"
+      },
+      {
+        "command": "jstrace.goToFunction",
+        "title": "Go to Function",
+        "category": "jstrace",
+        "icon": "$(symbol-function)"
+      },
+      {
         "command": "jstrace.open",
         "title": "Go to Code",
         "category": "jstrace"
@@ -119,17 +131,32 @@
         },
         {
           "command": "jstrace.showDetails",
-          "when": "view == jstrace.calls && viewItem =~ /^(call|resume|load|group)$/",
+          "when": "view == jstrace.calls && viewItem =~ /^(call|callSite|resume|load|group)$/",
           "group": "inline"
         },
         {
+          "command": "jstrace.goToFunction",
+          "when": "view == jstrace.calls && viewItem =~ /^(call|callSite)$/",
+          "group": "inline"
+        },
+        {
+          "command": "jstrace.goToSite",
+          "when": "view == jstrace.calls && viewItem == callSite",
+          "group": "0_go@1"
+        },
+        {
+          "command": "jstrace.goToFunction",
+          "when": "view == jstrace.calls && viewItem =~ /^(call|callSite|resume|group)$/",
+          "group": "0_go@2"
+        },
+        {
           "command": "jstrace.showDetails",
-          "when": "view == jstrace.calls && viewItem =~ /^(call|resume|load|group)$/",
+          "when": "view == jstrace.calls && viewItem =~ /^(call|callSite|resume|load|group)$/",
           "group": "1_details@1"
         },
         {
           "command": "jstrace.expandAll",
-          "when": "view == jstrace.calls && viewItem =~ /^(project|log|call|resume|load|group)$/",
+          "when": "view == jstrace.calls && viewItem =~ /^(project|log|call|callSite|resume|load|group)$/",
           "group": "1_details@2"
         },
         {

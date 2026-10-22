@@ -216,11 +216,13 @@ class CallsProvider {
       end?.type === 'throw'
         ? new vscode.ThemeIcon('error', new vscode.ThemeColor('errorForeground'))
         : new vscode.ThemeIcon(event.type === 'load' ? 'file-code' : event.type === 'resume' ? 'debug-continue' : 'symbol-function');
-    item.contextValue = event.type;
+    item.contextValue = event.type === 'call' && event.site ? 'callSite' : event.type;
     item.command =
       event.type === 'resume'
         ? { title: 'Show the call', command: 'jstrace.showCall', arguments: [element] }
-        : { title: 'Go to code', command: 'jstrace.open', arguments: [event.file, event.line ?? 1, event.column ?? 0] };
+        : event.site
+          ? { title: 'Go to where it was called', command: 'jstrace.goToSite', arguments: [element] }
+          : { title: 'Go to code', command: 'jstrace.open', arguments: [event.file, event.line ?? 1, event.column ?? 0] };
     return item;
   }
 
@@ -435,20 +437,51 @@ function activate(context) {
       'jstrace.open',
       /**
        * Opens a file at a position from a log: lines count from 1, columns from 0. While the
-       * file is instrumented the line is right but the column may be off a little.
+       * file is instrumented the line is right but the column may be off a little. Without
+       * a column (a call site), the cursor goes to where `name` is written on the line.
        * @param {string} file
        * @param {number} line
-       * @param {number} column
+       * @param {number | null} column
+       * @param {string} [name] what to look for on the line, without a column
        */
-      async (file, line, column) => {
+      async (file, line, column, name) => {
         try {
           const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
-          const position = document.validatePosition(new vscode.Position(Math.max(0, line - 1), column));
+          const at = Math.max(0, line - 1);
+          const character = column ?? (at < document.lineCount ? logs.columnOf(document.lineAt(at).text, name ?? '') : 0);
+          const position = document.validatePosition(new vscode.Position(at, character));
           // The editor takes the focus, since an unfocused one doesn't show its cursor.
           await vscode.window.showTextDocument(document, { selection: new vscode.Range(position, position) });
         } catch (error) {
           vscode.window.showErrorMessage(`jstrace: can't open ${file}: ${error instanceof Error ? error.message : String(error)}`);
         }
+      },
+    ),
+
+    vscode.commands.registerCommand(
+      'jstrace.goToSite',
+      /**
+       * Goes to where a call was made, on the callee's name there; to the function itself
+       * when that's unknown (a callback run by Node, or `callSites` off).
+       * @param {Item} [element] the selected item, from the command palette
+       */
+      async (element = view.selection[0]) => {
+        if (element?.kind !== 'node') return;
+        const event = element.node.event;
+        if (event.site) await vscode.commands.executeCommand('jstrace.open', event.site.file, event.site.line, null, logs.callName(event.name));
+        else await vscode.commands.executeCommand('jstrace.open', event.file, event.line ?? 1, event.column ?? 0);
+      },
+    ),
+
+    vscode.commands.registerCommand(
+      'jstrace.goToFunction',
+      /**
+       * Goes to the function a call (or resume, or group) ran, rather than where it was called.
+       * @param {Item} [element] the selected item, from the command palette
+       */
+      async (element = view.selection[0]) => {
+        const event = element?.kind === 'node' ? element.node.event : element?.kind === 'group' ? element.row.event : undefined;
+        if (event) await vscode.commands.executeCommand('jstrace.open', event.file, event.line ?? 1, event.column ?? 0);
       },
     ),
 

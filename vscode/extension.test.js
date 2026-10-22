@@ -98,11 +98,16 @@ function fakeVscode(dir) {
       createFileSystemWatcher: () => ({ onDidCreate() {}, onDidDelete() {}, dispose() {} }),
       onDidChangeWorkspaceFolders: () => ({ dispose() {} }),
       onDidChangeConfiguration: () => ({ dispose() {} }),
-      openTextDocument: async (/** @type {any} */ uri) => ({
-        fsPath: uri.fsPath,
-        text: contents[uri.scheme]?.provideTextDocumentContent(uri),
-        validatePosition: (/** @type {any} */ position) => position,
-      }),
+      openTextDocument: async (/** @type {any} */ uri) => {
+        const lines = uri.scheme === 'file' ? fs.readFileSync(uri.fsPath, 'utf8').split(/\r?\n/) : [];
+        return {
+          fsPath: uri.fsPath,
+          text: contents[uri.scheme]?.provideTextDocumentContent(uri),
+          lineCount: lines.length,
+          lineAt: (/** @type {number} */ line) => ({ text: lines[line] }),
+          validatePosition: (/** @type {any} */ position) => position,
+        };
+      },
       registerTextDocumentContentProvider: (/** @type {string} */ scheme, /** @type {any} */ provider) => {
         contents[scheme] = provider;
         return { dispose() {} };
@@ -156,7 +161,7 @@ test('the extension injects, shows the call trees, jumps to code, restores and c
   const main = roots.find((/** @type {any} */ item) => item.node?.event.name === 'main');
   const mainItem = provider.getTreeItem(main);
   assert.deepEqual([mainItem.label, mainItem.description, mainItem.iconPath.id], ['main()', '← undefined', 'symbol-function']);
-  assert.equal(mainItem.command.command, 'jstrace.open');
+  assert.equal(mainItem.command.command, 'jstrace.goToSite');
 
   const calls = provider.getChildren(main);
   const factorial = calls.find((/** @type {any} */ item) => item.node.event.name === 'factorial');
@@ -164,8 +169,15 @@ test('the extension injects, shows the call trees, jumps to code, restores and c
   const item = provider.getTreeItem(factorial);
   assert.deepEqual([item.label, item.description], ['factorial(n: 5)', '← 120']);
   assert.match(provider.resolveTreeItem(item, factorial).tooltip.value, /Returned:/);
+  /** @param {string} file @param {number} line @param {number} character */
+  const at = (file, line, character) => ({ file: path.join(dir, file), options: { selection: { start: { line, character }, end: { line, character } } } });
+  const opened = () => JSON.parse(JSON.stringify(fake.opened.pop()));
+  assert.equal(provider.getTreeItem(factorial).contextValue, 'callSite');
   await fake.commands[item.command.command](...item.command.arguments);
-  assert.deepEqual(JSON.parse(JSON.stringify(fake.opened.pop())), { file: path.join(dir, 'lib', 'math.js'), options: { selection: { start: { line: 6, character: 0 }, end: { line: 6, character: 0 } } } }, 'the editor takes the focus, to show its cursor');
+  assert.deepEqual(opened(), at('index.js', 25, 36), 'a click goes to where it was called, on the call (the editor takes the focus, to show its cursor)');
+  await fake.commands['jstrace.goToFunction'](factorial);
+  assert.deepEqual(opened(), at(path.join('lib', 'math.js'), 6, 0), 'the button goes to the function');
+  assert.match(provider.resolveTreeItem(item, factorial).tooltip.value, /Called from index\.js:26/);
 
   await fake.commands['jstrace.showDetails'](factorial);
   const shown = fake.opened.pop();

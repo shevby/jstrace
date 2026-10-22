@@ -14,6 +14,7 @@ const fs = require('node:fs');
  * @property {number} maxDepth how deep arguments and return values are serialized
  * @property {number} maxString how many characters of a string are logged
  * @property {number} maxLine how many characters an event's serialized values may take
+ * @property {boolean} callSites whether calls log the line they were made from
  * @property {number} maxRepeat how many calls of a function a call (or the top level) logs before only counting the rest; 0 for no limit
  */
 
@@ -25,6 +26,7 @@ const DEFAULTS = Object.freeze({
   maxString: 200,
   maxLine: 2000,
   maxRepeat: 20,
+  callSites: true,
 });
 
 /** A mistake in the config file, with a message for the user. */
@@ -82,6 +84,9 @@ function validate(data, file) {
       if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
         throw new ConfigError(`${file}: "${key}" must be a whole number, 0 or more`);
       }
+      config[key] = value;
+    } else if (key === 'callSites') {
+      if (typeof value !== 'boolean') throw new ConfigError(`${file}: "${key}" must be true or false`);
       config[key] = value;
     } else {
       throw new ConfigError(`${file}: unknown field "${key}" (known: ${Object.keys(DEFAULTS).join(', ')})`);

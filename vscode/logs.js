@@ -316,6 +316,7 @@ function nodeTooltip(node, root) {
   const where = event.type === 'load' ? relativePath(root, event.file) : `${relativePath(root, event.file)}:${event.line}`;
   const title = event.type === 'load' ? 'load' : event.type === 'resume' ? `↻ ${event.name}() resumed` : `${event.name}()`;
   const parts = [`**${title}** #${event.id}  \n${where}  \nat ${event.time} ms`];
+  if (event.site) parts.push(`Called from ${relativePath(root, event.site.file)}:${event.site.line}`);
   if (event.type === 'resume') parts.push(`Part of call #${event.call} (click to show it)`);
   if (event.type === 'call') {
     const args = event.args ?? {};
@@ -378,6 +379,41 @@ function rowTooltip(row, root) {
   const lines = [`**${event.name}()** called ${logged + (row.skip?.count ?? 0)} times here  \n${where}`];
   if (row.skip) lines.push(`${logged} logged, ${row.skip.count} not: ${why}`);
   return lines.join('\n\n');
+}
+
+/**
+ * The name a call of a function is written with, to find it on its call site's line:
+ * `factorial` for `factorial`, `add` for `Cart->add` or `cart.add`, the class for a
+ * constructor, `total` for `Cart->get total`. Empty when there's no name to look for (an
+ * anonymous or computed one).
+ * @param {string} name a call's name, as logged
+ * @returns {string}
+ */
+function callName(name) {
+  if (name.startsWith('<') || name.includes('[')) return '';
+  const [owner, member] = name.includes('->') ? name.split('->') : ['', name];
+  if (member === 'constructor') return owner;
+  return member.replace(/^(?:get|set|static) /, '').split('.').pop() ?? '';
+}
+
+/**
+ * Where on a line a call is written: the column of its name (not part of a longer word),
+ * preferring the last place it's called or reached through a dot (`math.factorial(` rather
+ * than the text in `'factorial(5) = '` before it), or else of the line's first character
+ * that isn't blank.
+ * @param {string} text the call site's line
+ * @param {string} name from {@link callName}
+ * @returns {number}
+ */
+function columnOf(text, name) {
+  if (name) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const found = [...text.matchAll(new RegExp(`(?<![\\w$#])${escaped}(?![\\w$])`, 'g'))];
+    const called = found.filter((match) => text[(match.index ?? 0) - 1] === '.' || /^\s*\(/.test(text.slice((match.index ?? 0) + name.length)));
+    const best = called.length > 0 ? called[called.length - 1] : found[0];
+    if (best) return best.index ?? 0;
+  }
+  return text.length - text.trimStart().length;
 }
 
 /**
@@ -444,6 +480,8 @@ function nodeDetails(node, root) {
     const outcome = call.outcome;
     const took = outcome ? `took ${Math.round((outcome.time - call.event.time) * 1000) / 1000} ms` : 'still running when the log ended';
     lines.push(`// called at ${call.event.time} ms, ${took}`);
+    const site = call.event.site;
+    if (site) lines.push(`// called from ${relativePath(root, site.file)}:${site.line}  (${site.file})`);
     lines.push(`// in: ${stackOf(call, root)}`);
     if (call.resumes.length > 0) lines.push(`// resumed ${call.resumes.length} ${call.resumes.length === 1 ? 'time' : 'times'}: ${call.resumes.map((part) => `#${part.event.id}`).join(', ')}`);
   }
@@ -485,6 +523,8 @@ function groupDetails(row, root) {
 
 module.exports = {
   parseLog,
+  callName,
+  columnOf,
   nodeDetails,
   groupDetails,
   rows,

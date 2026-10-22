@@ -93,10 +93,19 @@ test('the instrumented app logs both its processes, and restore brings back the 
   const [square] = calls(child, 'square');
   assert.deepEqual([square.args, end(child, square.id)?.value], [{ value: 4 }, 16]);
 
+  /** @param {Record<string, any>} event */
+  const site = (event) => event.site && `${path.relative(dir, event.site.file).replaceAll('\\', '/')}:${event.site.line}`;
+  assert.deepEqual(factorials.map(site), ['index.js:26', 'lib/math.js:8', 'lib/math.js:8', 'lib/math.js:8', 'lib/math.js:8']);
+  assert.equal(site(callback ?? {}), 'node_modules/greeter/index.js:10', 'a callback was called by the function that ran it');
+  const timer = app.events.filter((event) => event.type === 'call' && event.name.startsWith('<anonymous@6:66>'));
+  assert.ok(timer.length > 0 && timer.every((event) => event.site === undefined), 'a timer callback has no site');
+  assert.equal(site(square), 'child.js:11');
+
   const tree = app.tree.join('\n');
-  assert.match(tree, /^( *)factorial\(n: 5\) #\d+  lib\/math\.js:7\n\1  factorial\(n: 4\) #\d+  lib\/math\.js:7$/m);
+  assert.match(tree, /^( *)factorial\(n: 5\) #\d+  lib\/math\.js:7  \(from index\.js:26\)\n\1  factorial\(n: 4\) #\d+  lib\/math\.js:7  \(from lib\/math\.js:8\)$/m);
   assert.match(tree, /^↻ total\(\) #\d+ resumed  lib\/tasks\.js:13$/m);
-  assert.match(tree, /^ +Shape->set scale\(value: 2\) #\d+  lib\/shapes\.js:18$/m);
+  assert.match(tree, /^ +Shape->set scale\(value: 2\) #\d+  lib\/shapes\.js:18  \(from index\.js:35\)$/m);
+  assert.match(tree, /^<anonymous@6:66>\(\) #\d+  lib\/tasks\.js:6$/m);
 
   assert.equal(main(['restore'], quiet, dir), 0);
   const original = path.join(FIXTURES, 'app');

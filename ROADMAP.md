@@ -29,7 +29,7 @@ All done; see [DONE.md](DONE.md).
 
 ## 4. Later / maybe
 
-4.1, 4.5, 4.6 and 4.7 are done; see [DONE.md](DONE.md).
+4.1, 4.5, 4.6, 4.7 and 4.12 are done; see [DONE.md](DONE.md).
 
 - [ ] 4.2 Live tailing: the tree view follows a log as it's written. *(proposed)*
 - [ ] 4.3 Search and filter in the tree view (by function name or file). *(proposed)*
