@@ -42,7 +42,7 @@
     "viewsWelcome": [
       {
         "view": "jstrace.calls",
-        "contents": "No jstrace logs yet.\nRight-click a folder or file in the Explorer and choose \"Inject jstrace\", then run your program. Its calls show up here.\n[Refresh](command:jstrace.refresh)"
+        "contents": "No jstrace logs yet.\nRight-click a folder or file in the Explorer and choose \"jstrace: Inject\", then run your program. Its calls show up here.\n[Refresh](command:jstrace.refresh)"
       },
       {
         "view": "jstrace.searchResults",
@@ -70,8 +70,7 @@
       },
       {
         "command": "jstrace.inject",
-        "title": "Inject jstrace",
-        "category": "jstrace"
+        "title": "jstrace: Inject"
       },
       {
         "command": "jstrace.createMock",
@@ -128,8 +127,7 @@
       },
       {
         "command": "jstrace.searchLine",
-        "title": "Find Calls at This Line",
-        "category": "jstrace",
+        "title": "jstrace: Find Calls at This Line",
         "icon": "$(search)"
       },
       {
