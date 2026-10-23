@@ -193,8 +193,8 @@ Every hook is optional; what you leave out works as usual.
 
 | Hook | Replaces | Used for |
 | --- | --- | --- |
-| `fs.mkdirSync(path, { recursive: true })` | Node's `fs` | Creating the log folder. |
-| `fs.openSync(path, 'a')` → descriptor | Node's `fs` | Opening the `.jsonl` and the `.txt` to append to. |
+| `fs.mkdirSync(path, { recursive: true, mode: 0o700 })` | Node's `fs` | Creating the log folder. |
+| `fs.openSync(path, 'a', 0o600)` → descriptor | Node's `fs` | Opening the `.jsonl` and the `.txt` to append to. |
 | `fs.writeSync(fd, text)` | Node's `fs` | Writing to a log, one whole line at a time. |
 | `env(name)` → string or `undefined` | `process.env` | Only `JSTRACE_OUT` is read: a folder for the logs instead of `.jstrace/logs`. |
 | `pid()` → number | `process.pid` | The log's file name and its `start` event. |
@@ -269,6 +269,16 @@ Each process writes two files to `.jstrace/logs/` (or to `JSTRACE_OUT`), named `
       ← 24
     ← 120
   ```
+
+### What the logs hold
+
+The logs hold whatever passed through the traced functions: arguments, return values, errors, and the command line. That includes passwords, tokens, cookies or personal data, as they were. So jstrace keeps them to you:
+
+- `instrument` puts a `.gitignore` in `.jstrace/` that ignores all of it, so the logs and backups aren't committed. A `.gitignore` you put there yourself is left alone.
+- The log folder and files are readable by you only (modes `0700` and `0600`). On Windows, they take the permissions of the folder they're in.
+- jstrace never sends anything over the network.
+
+Mind where else they can go: a project in a synced folder (OneDrive, Dropbox) uploads them, and `JSTRACE_OUT` can put them anywhere.
 
 ## Limits
 

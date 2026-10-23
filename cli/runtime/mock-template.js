@@ -19,10 +19,11 @@
 
 module.exports = {
   // Writes the logs: these three are the only file calls jstrace makes (it reads none).
-  // Logs are opened to append ('a'), and written a whole line at a time.
+  // Logs are opened to append ('a'), readable by the user only (mode 0o600, the folder
+  // 0o700), and written a whole line at a time.
   // fs: {
   //   mkdirSync(path, options) {},
-  //   openSync(path, flags) {
+  //   openSync(path, flags, mode) {
   //     return files.push({ path, text: '' }) - 1;
   //   },
   //   writeSync(fd, text) {

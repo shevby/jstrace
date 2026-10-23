@@ -119,6 +119,19 @@ test('a file edited since it was instrumented is left alone', (t) => {
   assert.deepEqual(Object.keys(readManifest(projectAt(dir)).files), ['lib/math.js']);
 });
 
+test('instrument keeps .jstrace/ out of git, unless the user made its .gitignore', (t) => {
+  const dir = copyFixture(t, 'app');
+  const ignore = path.join(dir, '.jstrace/.gitignore');
+  run(dir, 'instrument', 'lib/math.js');
+  assert.match(fs.readFileSync(ignore, 'utf8'), /^\*$/m);
+  run(dir, 'restore');
+  assert.ok(fs.existsSync(ignore), 'restore keeps it');
+
+  fs.writeFileSync(ignore, '# mine\n');
+  run(dir, 'instrument', 'lib/math.js');
+  assert.equal(fs.readFileSync(ignore, 'utf8'), '# mine\n');
+});
+
 test('restore never writes outside the project, whatever the manifest names', (t) => {
   const dir = copyFixture(t, 'app');
   const victim = path.join(dir, '..', `${path.basename(dir)}-victim.js`);

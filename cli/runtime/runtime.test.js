@@ -438,6 +438,27 @@ test('globalThis.__jstraceFs writes the logs when it is set', async (t) => {
   }
 });
 
+test('the logs are readable by the user only', async (t) => {
+  /** @type {any[]} */
+  const calls = [];
+  /** @type {any} */ (globalThis).__jstraceFs = {
+    mkdirSync: (/** @type {string} */ _, /** @type {any} */ options) => calls.push(['mkdirSync', options]),
+    openSync: (/** @type {string} */ _, /** @type {string} */ flags, /** @type {number} */ mode) => calls.push(['openSync', flags, mode]),
+    writeSync() {},
+  };
+  try {
+    await run(t, 'function f() {} f();');
+  } finally {
+    delete (/** @type {any} */ (globalThis).__jstraceFs);
+  }
+  assert.deepEqual(calls, [['mkdirSync', { recursive: true, mode: 0o700 }], ['openSync', 'a', 0o600], ['openSync', 'a', 0o600]]);
+
+  if (process.platform === 'win32') return; // modes are ignored there
+  const { logs } = await run(t, 'function f() {} f();');
+  assert.equal(fs.statSync(logs).mode & 0o777, 0o700);
+  for (const name of fs.readdirSync(logs)) assert.equal(fs.statSync(path.join(logs, name)).mode & 0o777, 0o600, name);
+});
+
 test('when the logs cannot be written, tracing stops with a message and the program goes on', async (t) => {
   const error = t.mock.method(console, 'error', () => {});
   const { dir, exports } = await run(t, 'function f(x) { return x * 2; } module.exports = f(2);', { logs: __filename + '/logs' });

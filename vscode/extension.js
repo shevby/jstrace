@@ -785,8 +785,8 @@ function activate(context) {
         try {
           const sources = chosen.map((log) => ({ file: log.file, text: fs.readFileSync(log.file, 'utf8'), name: nameOf(log) }));
           const { jsonl, txt } = logs.mergeLogs(sources, chosen[0].root);
-          fs.writeFileSync(logs.textOf(file), txt);
-          fs.writeFileSync(file, jsonl);
+          fs.writeFileSync(logs.textOf(file), txt, { mode: 0o600 });
+          fs.writeFileSync(file, jsonl, { mode: 0o600 });
         } catch (error) {
           return void vscode.window.showErrorMessage(`jstrace: can't merge the logs: ${error instanceof Error ? error.message : String(error)}`);
         }

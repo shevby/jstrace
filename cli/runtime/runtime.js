@@ -112,8 +112,8 @@
 /**
  * The file calls the runtime makes, with Node's `fs` signatures.
  * @typedef {object} MockFs
- * @property {(path: string, options: { recursive: true }) => unknown} mkdirSync creates the log folder
- * @property {(path: string, flags: 'a') => number} openSync opens a log to append to, giving its descriptor
+ * @property {(path: string, options: { recursive: true, mode: number }) => unknown} mkdirSync creates the log folder (`mode` 0o700)
+ * @property {(path: string, flags: 'a', mode: number) => number} openSync opens a log to append to (`mode` 0o600), giving its descriptor
  * @property {(fd: number, text: string) => unknown} writeSync appends text (whole lines) to a log
  */
 
@@ -268,11 +268,12 @@ function createRuntime(require, options) {
    */
   function open() {
     fs = mock.fs || require('fs');
-    fs.mkdirSync(folder, { recursive: true });
+    // Only the user may read the logs, as they hold whatever the program passed around.
+    fs.mkdirSync(folder, { recursive: true, mode: 0o700 });
     const separator = folder.includes('\\') ? '\\' : '/';
     const base = `${folder.replace(/[\\/]+$/, '')}${separator}${started.toISOString().replace(/:/g, '-')}-${pid}`;
-    jsonl = fs.openSync(`${base}.jsonl`, 'a');
-    txt = fs.openSync(`${base}.txt`, 'a');
+    jsonl = fs.openSync(`${base}.jsonl`, 'a', 0o600);
+    txt = fs.openSync(`${base}.txt`, 'a', 0o600);
     const argv = hook('argv', () => (proc && Array.isArray(proc.argv) ? proc.argv : []))().map(String);
     const cwd = hook('cwd', () => (proc && typeof proc.cwd === 'function' ? proc.cwd() : null))();
     fs.writeSync(jsonl, oneLine(JSON.stringify({ type: 'start', pid, argv, cwd, started: started.toISOString(), time: 0 })) + '\n');
