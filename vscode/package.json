@@ -10,7 +10,7 @@
   "type": "commonjs",
   "main": "./extension.js",
   "engines": {
-    "vscode": "^1.100.0"
+    "vscode": "^1.96.0"
   },
   "activationEvents": [
     "workspaceContains:jstrace.config.json",
