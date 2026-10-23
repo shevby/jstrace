@@ -415,6 +415,25 @@ test('the Search view finds calls in every log; a double-click shows one in the 
   assert.equal(view.message, 'No calls match “nothing like it”.');
   await fake.commands['jstrace.clearSearch']();
   assert.deepEqual([search.getChildren(), view.message], [[], undefined]);
+
+  const window = /** @type {any} */ (fake.vscode.window);
+  /** @param {number} line @returns {Promise<number[]>} the ids found at the line */
+  const findAt = async (line) => {
+    window.activeTextEditor = { document: { uri: { fsPath: index, scheme: 'file' } }, selection: { active: { line: line - 1 } } };
+    await fake.commands['jstrace.searchLine']();
+    return search.getChildren().flatMap((/** @type {any} */ results) => search.getChildren(results).map((/** @type {any} */ node) => node.node.event.id));
+  };
+  assert.deepEqual(await findAt(26), [2, 3, 4, 5, 6, 7], "the calls made from the cursor's line");
+  assert.equal(view.message, '6 calls at index.js:26');
+  assert.deepEqual(await findAt(23), [1], 'the calls of a function defined on it');
+  assert.equal(view.message, '1 call at index.js:23');
+  assert.deepEqual(await findAt(1), []);
+  assert.equal(view.message, 'No calls at index.js:1.');
+  window.activeTextEditor = undefined;
+  await fake.commands['jstrace.searchLine']();
+  assert.equal(fake.messages.pop(), 'info: jstrace: open a file to find the calls at its line.');
+  await fake.commands['jstrace.clearSearch']();
+  assert.deepEqual([search.getChildren(), view.message], [[], undefined]);
 });
 
 test('stepping goes through the run, showing each call where it was called with its values', async (t) => {

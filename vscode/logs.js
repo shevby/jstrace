@@ -548,6 +548,38 @@ function search(trace, query, root) {
 }
 
 /**
+ * Whether two absolute paths name the same file. Case is ignored on Windows, where VSCode
+ * gives `d:\…` for what Node calls `D:\…`.
+ * @param {string} a
+ * @param {string} b
+ * @returns {boolean}
+ */
+function samePath(a, b) {
+  const [x, y] = [path.resolve(a), path.resolve(b)];
+  return process.platform === 'win32' ? x.toLowerCase() === y.toLowerCase() : x === y;
+}
+
+/**
+ * The calls of a log at a line of code (4.16): those made from it (their call site, or
+ * where an external call was made), and those of a function defined on it.
+ * @param {Trace} trace
+ * @param {string} file absolute
+ * @param {number} line counting from 1
+ * @returns {TraceNode[]} in the order they ran
+ */
+function searchAt(trace, file, line) {
+  /** @type {TraceNode[]} */
+  const found = [];
+  for (const node of trace.nodes.values()) {
+    const event = node.event;
+    if (event.type !== 'call') continue;
+    const here = event.line === line && samePath(event.file, file);
+    if (here || (event.site?.line === line && samePath(event.site.file, file))) found.push(node);
+  }
+  return found;
+}
+
+/**
  * Where the words of a search first are in a label, to highlight them.
  * @param {string} label
  * @param {string} query
@@ -863,6 +895,7 @@ module.exports = {
   callName,
   columnOf,
   search,
+  searchAt,
   highlights,
   step,
   stackOf,

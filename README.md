@@ -87,6 +87,8 @@ Each log is one process, labeled by its script and arguments, with its start tim
 
 **Search** (the magnifier button) finds calls in every log by function name, arguments, result or `file:line`. Every word must match, ignoring case. Results appear in the **Search** view. A click goes to the code, and a double-click shows the call in the Calls view.
 
+**Find Calls at This Line** (the editor's context menu, or the command palette) lists in the Search view the calls at the cursor's line: those made from it, and those of a function defined on it.
+
 **Stepping**: with the Calls or Search view focused, step through a run in the order it happened:
 
 | Keys | Step |

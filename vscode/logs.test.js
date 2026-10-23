@@ -210,6 +210,23 @@ test('search finds the calls and loads with every word, in names, arguments, val
   assert.deepEqual(logs.highlights('divide(a: 1, b: 0)', 'b: DIV'), [[0, 3], [13, 15]]);
 });
 
+test('searchAt finds the calls made from a line, or of a function defined on it', () => {
+  const trace = logs.parseLog([
+    { type: 'start', pid: 7, argv: ['node', file('a.js')], cwd: ROOT, started: '2026-10-22T12:19:17.035Z', time: 0 },
+    { type: 'call', id: 1, parent: null, depth: 0, name: 'main', file: file('a.js'), line: 1, column: 0, args: {}, time: 1 },
+    { type: 'call', id: 2, parent: 1, depth: 1, name: 'add', file: file('b.js'), line: 4, column: 0, args: {}, site: { file: file('a.js'), line: 2 }, time: 2 },
+    { type: 'resume', id: 3, call: 2, parent: null, depth: 0, name: 'add', file: file('b.js'), line: 4, column: 0, time: 3 },
+    { type: 'call', id: 4, parent: 1, depth: 1, name: 'fs.readFileSync', external: true, file: file('a.js'), line: 2, column: 5, args: [], time: 4 },
+    { type: 'call', id: 5, parent: 1, depth: 1, name: 'add', file: file('b.js'), line: 4, column: 0, args: {}, site: { file: file('a.js'), line: 3 }, time: 5 },
+  ].map((event) => JSON.stringify(event)).join('\n'));
+  const ids = (/** @type {string} */ at, /** @type {number} */ line) => logs.searchAt(trace, at, line).map((node) => node.event.id);
+  assert.deepEqual(ids(file('a.js'), 2), [2, 4], 'called from it, and external calls made on it');
+  assert.deepEqual(ids(file('b.js'), 4), [2, 5], 'calls of the function defined on it, not its resumes');
+  assert.deepEqual(ids(file('a.js'), 1), [1]);
+  assert.deepEqual(ids(file('b.js'), 2), [], 'another file');
+  if (process.platform === 'win32') assert.deepEqual(ids(file('a.js').toLowerCase(), 2), [2, 4], 'case is ignored on Windows');
+});
+
 test('steps go through a run in the order it ran, into, over or out of calls, and back', () => {
   const trace = logs.parseLog(LOG);
   const node = (/** @type {number} */ id) => /** @type {import('./logs').TraceNode} */ (trace.nodes.get(id));
