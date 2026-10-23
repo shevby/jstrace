@@ -70,8 +70,8 @@ module.exports = {
   //   return null;
   // },
 
-  // Calls the listener once, as the program ends: the calls skipped at the top level
-  // (past maxRepeat) are logged then.
+  // Calls the listener once, as the program ends, with its exit code: the calls skipped at
+  // the top level (past maxRepeat) are logged then, and that the program ended.
   // onExit(listener) {
   //   process.once('exit', listener);
   // },

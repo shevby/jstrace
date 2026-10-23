@@ -26,7 +26,15 @@ async function run(t, source, options = {}, externalCalls) {
   const { code } = instrumentSource(source, { file: path.join(dir, 'x.js'), options: { logs, root: dir, callSites: false, ...options }, externalCalls });
   delete (/** @type {any} */ (globalThis).__jt);
   const module = { exports: /** @type {unknown} */ ({}) };
-  new Function('require', 'module', 'exports', code)(require, module, module.exports);
+  // The process this runs in ends after every test, so no `end` (it's tested in a child process).
+  const g = /** @type {any} */ (globalThis);
+  const quiet = !g.__jstraceMock && !g.__jstraceFs;
+  if (quiet) g.__jstraceMock = { onExit() {} };
+  try {
+    new Function('require', 'module', 'exports', code)(require, module, module.exports);
+  } finally {
+    if (quiet) delete g.__jstraceMock;
+  }
   const exports = await module.exports;
   delete (/** @type {any} */ (globalThis).__jt);
   return { dir, logs, exports };
@@ -66,8 +74,8 @@ outer(4); none();`,
   );
   assert.match(name, /^\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d\.\d{3}Z-\d+\.jsonl$/);
   const [start, ...rest] = events;
-  assert.deepEqual([start.type, start.pid, start.argv, start.cwd], ['start', process.pid, process.argv, process.cwd()]);
-  assert.ok(rest.every((event) => event.file === undefined || event.file === path.join(dir, 'x.js')));
+  assert.deepEqual([start.type, start.pid, start.argv, start.cwd, start.root], ['start', process.pid, process.argv, process.cwd(), dir]);
+  assert.ok(rest.every((event) => event.file === undefined || event.file === 'x.js'), 'paths in the project are relative to it');
   assert.deepEqual(stable(rest), [
     { type: 'load', id: 1, parent: null, depth: 0 },
     { type: 'call', id: 2, parent: null, depth: 0, name: 'outer', line: 2, column: 0, args: { n: 4 } },
@@ -151,7 +159,7 @@ module.exports = main();`,
     '  ← "done"',
   ]);
   assert.deepEqual(events.find((event) => event.type === 'resume'), {
-    type: 'resume', id: 4, call: 3, parent: null, depth: 0, name: 'fails', file: path.join(dir, 'x.js'), line: 2, column: 0,
+    type: 'resume', id: 4, call: 3, parent: null, depth: 0, name: 'fails', file: 'x.js', line: 2, column: 0,
     time: events.find((event) => event.type === 'resume')?.time,
   });
 });
@@ -297,7 +305,7 @@ test('maxRepeat 0 logs every call', async (t) => {
   assert.equal(events.filter((event) => event.type === 'skip').length, 0);
 });
 
-test('calls skipped at the top level are reported when the process exits', (t) => {
+test('calls skipped at the top level are reported when the process exits, then its end', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jstrace-runtime-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const logs = path.join(dir, 'logs');
@@ -307,8 +315,28 @@ test('calls skipped at the top level are reported when the process exits', (t) =
   const [log] = readLogs(logs);
   const calls = log.events.filter((event) => event.type === 'call' && event.name === 'f');
   assert.deepEqual(calls.map((event) => event.args.i), [...Array(20).keys(), -1], 'maxRepeat is 20 by default; the callback counts its own');
-  assert.deepEqual(stable(log.events.slice(-1)), [{ type: 'skip', parent: null, name: 'f', line: 1, column: 0, count: 5 }]);
-  assert.equal(log.tree[log.tree.length - 1], '… f() called 5 more times, not logged  x.js:1');
+  assert.deepEqual(stable(log.events.slice(-2)), [{ type: 'skip', parent: null, name: 'f', line: 1, column: 0, count: 5 }, { type: 'end', code: 0 }]);
+  assert.deepEqual(log.tree.slice(-2), ['… f() called 5 more times, not logged  x.js:1', `jstrace: process ${log.events[0].pid} ended with code 0`]);
+});
+
+test('paths in the project are logged relative to it, whatever case Windows gives its drive in', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jstrace-runtime-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const logs = path.join(dir, 'logs');
+  const sources = { 'main.js': "const { f } = require('./lib/b');\nf();", 'lib/b.js': 'exports.f = function f() {};' };
+  for (const [name, source] of Object.entries(sources)) {
+    const file = path.join(dir, name);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, instrumentSource(source, { file, options: { logs, root: dir } }).code);
+  }
+  // `d:\…` run as `D:\…`: Node's stack frames have the case it was given
+  const flipped = process.platform === 'win32' ? dir.charAt(0).toLowerCase() === dir.charAt(0) ? dir.charAt(0).toUpperCase() + dir.slice(1) : dir.charAt(0).toLowerCase() + dir.slice(1) : dir;
+  execFileSync(process.execPath, [path.join(flipped, 'main.js')], { cwd: dir });
+  const [log] = readLogs(logs);
+  const call = log.events.find((event) => event.type === 'call');
+  assert.deepEqual(log.events.filter((event) => event.type === 'load').map((event) => event.file), ['main.js', 'lib/b.js']);
+  assert.deepEqual([call?.file, call?.site], ['lib/b.js', { file: 'main.js', line: 2 }]);
+  assert.equal(log.events[0].root, dir);
 });
 
 test('a call site is the first frame from a file after the called function', async (t) => {
@@ -385,19 +413,20 @@ test('a mock replaces what tracing uses, and one that throws is dropped', async 
     onExit: (listener) => void exits.push(listener),
     warn: (message) => void warnings.push(message),
   };
+  let dir = '';
   /** @type {any} */ (globalThis).__jstraceMock = mock;
   try {
-    await run(t, 'function f(i) { return i; }\nfunction loop() { for (let i = 0; i < 3; i++) f(i); }\nf(0); f(1); f(2); loop();', { maxRepeat: 2, callSites: true });
+    ({ dir } = await run(t, 'function f(i) { return i; }\nfunction loop() { for (let i = 0; i < 3; i++) f(i); }\nf(0); f(1); f(2); loop();', { maxRepeat: 2, callSites: true }));
   } finally {
     delete (/** @type {any} */ (globalThis).__jstraceMock);
   }
   assert.deepEqual(files.map((file) => file.path), ['/mocked/logs/2026-01-01T00-00-00.000Z-7.jsonl', '/mocked/logs/2026-01-01T00-00-00.000Z-7.txt']);
   const events = files[0].text.trim().split('\n').map((line) => JSON.parse(line));
-  assert.deepEqual(events[0], { type: 'start', pid: 7, argv: ['node', '/app/main.js', '--fast'], cwd: '/app', started: '2026-01-01T00:00:00.000Z', time: 0 });
+  assert.deepEqual(events[0], { type: 'start', pid: 7, argv: ['node', '/app/main.js', '--fast'], cwd: '/app', root: dir, started: '2026-01-01T00:00:00.000Z', time: 0 });
   assert.deepEqual(events.slice(1, 3).map((event) => [event.type, event.time, event.site]), [['load', 0.5, undefined], ['call', 1, { file: '/app/caller.js', line: 3 }]]);
   assert.equal(exits.length, 1, 'the top level skipped a call of f, logged when the process ends');
   exits[0]();
-  assert.match(files[1].text, /\n… f\(\) called 1 more time, not logged {2}x\.js:1\n$/);
+  assert.match(files[1].text, /\n… f\(\) called 1 more time, not logged {2}x\.js:1\njstrace: process 7 ended\n$/);
   assert.deepEqual(warnings, []);
 
   /** @type {string[]} */

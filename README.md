@@ -208,8 +208,8 @@ Every hook is optional; what you leave out works as usual.
 | `cwd()` → string | `process.cwd()` | The working folder, in the `start` event. |
 | `now()` → ms | `performance.now()` | Event times; only the differences between readings count. |
 | `date()` → Date | `new Date()` | When the process started: the log's file name. |
-| `site()` → `{ file, line }` or `null` | V8 stack traces | Where the call starting now was made. `file` is an absolute path; `line` counts from 1. |
-| `onExit(listener)` | `process.once('exit')` | Logging the calls skipped at the top level, when the program ends. |
+| `site()` → `{ file, line }` or `null` | V8 stack traces | Where the call starting now was made. `file` is an absolute path (logged relative to the project when it's in it); `line` counts from 1. |
+| `onExit(listener)` | `process.once('exit')` | Logging the calls skipped at the top level, and the `end` event, when the program ends. `listener` takes the exit code. |
 | `warn(message)` | `console.error` | jstrace's own messages, like logs it can't write. |
 
 The three `fs` hooks go together: if you mock `fs`, give all three.
@@ -266,7 +266,7 @@ module.exports = { site: () => null };
 
 Each process writes two files to `.jstrace/logs/` (or to `JSTRACE_OUT`), named `<start time>-<pid>`:
 
-- **`.jsonl`**: one JSON event per line. This is what the extension reads. The events are `start`, `load`, `call`, `resume`, `return`, `throw`, `yield` and `skip`. Each has a `time` in milliseconds since the start; node events have an `id` and a `parent`.
+- **`.jsonl`**: one JSON event per line. This is what the extension reads. The events are `start`, `load`, `call`, `resume`, `return`, `throw`, `yield`, `skip` and `end` (the process exited, with its `code`). Each has a `time` in milliseconds since the start; node events have an `id` and a `parent`.
 - **`.txt`**: the same as an indented tree you can read anywhere:
 
   ```
@@ -275,6 +275,17 @@ Each process writes two files to `.jstrace/logs/` (or to `JSTRACE_OUT`), named `
       ← 24
     ← 120
   ```
+
+### Reading logs on another machine
+
+Files in the project are logged relative to it (`lib/math.js`), so you can copy `.jstrace/logs/` (or a few of its logs) into `.jstrace/logs/` of the same project on another machine, wherever it is there, and explore them as if they were made there: **Go to Function**, call sites, stepping and **Find Calls at This Line** open that machine's files. Keep in mind:
+
+- The code should be the same version as when the logs were written, or lines point to the wrong places. Nothing checks this.
+- Files outside the project (a call site in a globally installed package) stay absolute, and can't be opened elsewhere.
+- The command line, the working folder and the project's path are logged as they were, so the other machine sees them (with your user name, often).
+- A log that ended shows as ended. One whose process was killed, or is still running, may show a spinning icon for up to 30 minutes, if a process there happens to have its pid.
+- Logs from different machines merge, but in the order their clocks give.
+- Logs written before this change hold absolute paths, which work only where they were written.
 
 ### What the logs hold
 

@@ -47,8 +47,7 @@ test('the instrumented app logs both its processes, and restore brings back the 
    */
   const end = (log, id) => log.events.find((event) => (event.type === 'return' || event.type === 'throw') && event.call === id);
   /** @param {import('./helpers').Log} log */
-  const loads = (log) =>
-    log.events.filter((event) => event.type === 'load').map((event) => path.relative(dir, event.file).replaceAll('\\', '/'));
+  const loads = (log) => log.events.filter((event) => event.type === 'load').map((event) => event.file);
 
   assert.deepEqual(loads(app), [
     'index.js', 'lib/math.js', 'lib/shapes.js', 'lib/tasks.js', 'lib/util.cjs', 'node_modules/greeter/index.js', // not *.min.js
@@ -57,7 +56,8 @@ test('the instrumented app logs both its processes, and restore brings back the 
 
   for (const log of [app, child]) {
     const nodes = new Set();
-    for (const event of log.events.slice(1)) {
+    assert.deepEqual(log.events[log.events.length - 1], { type: 'end', code: 0, time: log.events[log.events.length - 1].time }, `${log.name}: the process ended`);
+    for (const event of log.events.slice(1, -1)) {
       if (event.parent !== null) assert.ok(nodes.has(event.parent), `${log.name}: ${JSON.stringify(event)} is inside a node not seen yet`);
       if (event.id !== undefined) nodes.add(event.id);
     }
@@ -94,7 +94,7 @@ test('the instrumented app logs both its processes, and restore brings back the 
   assert.deepEqual([square.args, end(child, square.id)?.value], [{ value: 4 }, 16]);
 
   /** @param {Record<string, any>} event */
-  const site = (event) => event.site && `${path.relative(dir, event.site.file).replaceAll('\\', '/')}:${event.site.line}`;
+  const site = (event) => event.site && `${event.site.file}:${event.site.line}`;
   assert.deepEqual(factorials.map(site), ['index.js:26', 'lib/math.js:8', 'lib/math.js:8', 'lib/math.js:8', 'lib/math.js:8']);
   assert.equal(site(callback ?? {}), 'node_modules/greeter/index.js:10', 'a callback was called by the function that ran it');
   const timer = app.events.filter((event) => event.type === 'call' && event.name.startsWith('<anonymous@6:66>'));
