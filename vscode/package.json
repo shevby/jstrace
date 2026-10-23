@@ -127,6 +127,12 @@
         "icon": "$(search)"
       },
       {
+        "command": "jstrace.searchLine",
+        "title": "Find Calls at This Line",
+        "category": "jstrace",
+        "icon": "$(search)"
+      },
+      {
         "command": "jstrace.clearSearch",
         "title": "Clear Search",
         "category": "jstrace",
@@ -305,6 +311,13 @@
           "group": "0_go@9"
         }
       ],
+      "editor/context": [
+        {
+          "command": "jstrace.searchLine",
+          "when": "resourceScheme == file && editorLangId == javascript",
+          "group": "jstrace@1"
+        }
+      ],
       "explorer/context": [
         {
           "command": "jstrace.inject",
@@ -313,6 +326,10 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "jstrace.searchLine",
+          "when": "editorIsOpen && resourceScheme == file"
+        },
         {
           "command": "jstrace.openText",
           "when": "false"

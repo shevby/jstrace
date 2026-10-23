@@ -416,12 +416,22 @@ class SearchProvider {
     this.calls = calls;
     /** @type {string} what to look for: words that must all be found, ignoring case */
     this.query = '';
+    /** @type {{ file: string, line: number, where: string } | undefined} or else a line of code to find the calls at (4.16) */
+    this.at = undefined;
     /** @type {vscode.TreeView<SearchItem> | undefined} where it says how many matched */
     this.view = undefined;
     /** @type {vscode.EventEmitter<SearchItem | undefined>} */
     this.changed = new vscode.EventEmitter();
     /** @type {vscode.Event<SearchItem | undefined>} */
     this.onDidChangeTreeData = this.changed.event;
+  }
+
+  /**
+   * Whether something is searched.
+   * @returns {boolean}
+   */
+  get active() {
+    return Boolean(this.query || this.at);
   }
 
   /**
@@ -441,13 +451,17 @@ class SearchProvider {
       /** @type {ResultsItem[]} */
       const items = [];
       let count = 0;
-      for (const log of this.query ? this.calls.allLogs() : []) {
-        const nodes = logs.search(log.trace, this.query, log.root);
+      const at = this.at;
+      for (const log of this.active ? this.calls.allLogs() : []) {
+        const nodes = at ? logs.searchAt(log.trace, at.file, at.line) : logs.search(log.trace, this.query, log.root);
         count += nodes.length;
         if (nodes.length > 0) items.push({ kind: 'results', log, nodes });
       }
       if (this.view) {
-        this.view.message = !this.query ? undefined : count === 0 ? `No calls match “${this.query}”.` : `${count} ${count === 1 ? 'match' : 'matches'} for “${this.query}”`;
+        const calls = `${count} ${count === 1 ? 'call' : 'calls'}`;
+        this.view.message = at
+          ? count === 0 ? `No calls at ${at.where}.` : `${calls} at ${at.where}`
+          : !this.query ? undefined : count === 0 ? `No calls match “${this.query}”.` : `${count} ${count === 1 ? 'match' : 'matches'} for “${this.query}”`;
       }
       return items;
     }
@@ -563,7 +577,7 @@ function activate(context) {
     pending = setTimeout(() => provider.refresh(), 300);
   };
   provider.onDidChangeTreeData(() => {
-    if (search.query) search.refresh();
+    if (search.active) search.refresh();
   });
   const ticker = setInterval(() => provider.tick(), 1000);
   ticker.unref(); // not to keep a process alive (tests)
@@ -966,12 +980,35 @@ function activate(context) {
       });
       if (query === undefined) return; // cancelled
       search.query = query.trim();
+      search.at = undefined;
       search.refresh();
       await vscode.commands.executeCommand('jstrace.searchResults.focus');
     }),
 
+    vscode.commands.registerCommand(
+      'jstrace.searchLine',
+      /**
+       * Lists in the Search view the calls at the cursor's line (4.16): made from it, or of a
+       * function defined on it.
+       */
+      async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor || editor.document.uri.scheme !== 'file') {
+          return void vscode.window.showInformationMessage('jstrace: open a file to find the calls at its line.');
+        }
+        const file = editor.document.uri.fsPath;
+        const line = editor.selection.active.line + 1;
+        const folder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
+        search.query = '';
+        search.at = { file, line, where: `${folder ? logs.relativePath(folder.uri.fsPath, file) : path.basename(file)}:${line}` };
+        search.refresh();
+        await vscode.commands.executeCommand('jstrace.searchResults.focus');
+      },
+    ),
+
     vscode.commands.registerCommand('jstrace.clearSearch', () => {
       search.query = '';
+      search.at = undefined;
       search.refresh();
     }),
 
