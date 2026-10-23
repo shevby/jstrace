@@ -5,10 +5,12 @@
  * as acorn is the only dependency.
  */
 
-const { instrument, restore, createMock } = require('./commands');
+const { init, instrument, restore, createMock } = require('./commands');
 const { findProject } = require('./project');
 
 const USAGE = `Usage:
+  jstrace init                   create jstrace.config.json with the defaults, and .jstrace/,
+                                 to configure tracing before instrumenting
   jstrace instrument <path...>   inject tracing into the files under the paths
   jstrace restore [path...]      put the original files back (all, or those under the paths)
   jstrace mock [file]            create a mock of what tracing uses (file writes, clock, …) from
@@ -44,7 +46,9 @@ function main(argv, output = consoleOutput, cwd = process.cwd()) {
     output.out(USAGE);
     return command === undefined ? 2 : 0;
   }
-  if (command !== 'instrument' && command !== 'restore' && command !== 'mock') {
+  /** @type {Record<string, typeof instrument>} */
+  const commands = { init, instrument, restore, mock: createMock };
+  if (!Object.hasOwn(commands, command)) {
     output.err(`Unknown command: ${command}\n\n${USAGE}`);
     return 2;
   }
@@ -52,8 +56,11 @@ function main(argv, output = consoleOutput, cwd = process.cwd()) {
     output.err(`instrument takes the files or folders to instrument\n\n${USAGE}`);
     return 2;
   }
-  const project = findProject(cwd);
-  return (command === 'instrument' ? instrument : command === 'restore' ? restore : createMock)(project, args, cwd, output);
+  if (command === 'init' && args.length > 0) {
+    output.err(`init takes no arguments: it sets up the project in the current folder\n\n${USAGE}`);
+    return 2;
+  }
+  return commands[command](findProject(cwd), args, cwd, output);
 }
 
 module.exports = { main, USAGE };

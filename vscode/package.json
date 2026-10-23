@@ -42,7 +42,7 @@
     "viewsWelcome": [
       {
         "view": "jstrace.calls",
-        "contents": "No jstrace logs yet.\nRight-click a folder or file in the Explorer and choose \"jstrace: Inject\", then run your program. Its calls show up here.\n[Refresh](command:jstrace.refresh)"
+        "contents": "No jstrace logs yet.\nTo configure tracing before injecting it, create jstrace.config.json:\n[jstrace: Init](command:jstrace.init)\nThen right-click a folder or file in the Explorer, choose \"jstrace: Inject\", and run your program. Its calls show up here.\n[Refresh](command:jstrace.refresh)"
       },
       {
         "view": "jstrace.searchResults",
@@ -67,6 +67,10 @@
         "title": "Restore Original Files",
         "category": "jstrace",
         "icon": "$(discard)"
+      },
+      {
+        "command": "jstrace.init",
+        "title": "jstrace: Init"
       },
       {
         "command": "jstrace.inject",
@@ -317,6 +321,11 @@
         }
       ],
       "explorer/context": [
+        {
+          "command": "jstrace.init",
+          "when": "resourceScheme == file && explorerResourceIsFolder",
+          "group": "7_modification@8"
+        },
         {
           "command": "jstrace.inject",
           "when": "resourceScheme == file",
