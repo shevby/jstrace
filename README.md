@@ -23,7 +23,7 @@ It's a debugging aid: tracing is slow, and that's fine.
 
 ## Install
 
-You need Node.js 18 or newer to run the CLI. Traced programs can run on Node 12 or newer. The extension needs VSCode 1.100 or newer.
+You need Node.js 18 or newer to run the CLI. Traced programs can run on Node 12 or newer. The extension needs VSCode 1.96 or newer.
 
 1. Build the extension from this repository:
 

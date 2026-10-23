@@ -10,7 +10,7 @@ These are completed roadmap items, moved out of [ROADMAP.md](ROADMAP.md) to keep
   - The extension is an empty `activate`, activated by a `.jstrace` folder in the workspace.
 - [x] 0.3 JSDoc, `jsconfig.json` (`checkJs`), and `npm run typecheck`: TypeScript 7 as a dev-only checker, now part of `npm run check`.
   - `@types/node` is pinned to 18, the oldest Node supported, so newer APIs are type errors.
-  - `@types/vscode` is 1.100, matching `engines.vscode`.
+  - `@types/vscode` is 1.96, matching `engines.vscode` (lowered from 1.100 so the extension runs on VSCode 1.96.4).
 - [x] 0.4 Test fixtures: `test/fixtures/app`, a small CommonJS app.
   - It has a shebang and directive in `index.js`. `lib/math.js` has every plain function form, a throw caught by its caller, object method shorthand, and a function assigned to a property. `lib/shapes.js` has classes with constructors and `super`, a getter/setter, a static method, an arrow class field, and a private field.
   - `lib/tasks.js` has async/await, an async arrow, timer and `.then()` callbacks, and a generator.
