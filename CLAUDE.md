@@ -111,6 +111,7 @@ It's a debugging aid, not a product. Keep it small. Slow tracing is fine, and sc
 - Local only, so no `git push`.
 - A separate branch per feature/fix (`feature/…`, `fix/…`, `docs/…`) off `master`.
 - Run `npm run check` (typecheck + tests) before merging into `master`. Once it passes, merge a finished branch (`git merge --no-ff`) without asking. Ask only when unsure.
+- After merging a change to the extension, the CLI or the runtime, run `npm run package`, so the `.vsix` the user installs is current.
 - A bug fix should add a test covering the regression it fixes, when that's reasonable and doesn't take too long. It's not a hard requirement.
 - Never delete branches or squash commits.
 
