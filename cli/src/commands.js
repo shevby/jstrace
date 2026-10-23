@@ -221,6 +221,12 @@ function restore(project, targets, cwd, output) {
       const file = path.join(project.dir, rel);
       const backup = path.join(project.backup, rel);
       const kept = path.relative(project.dir, backup);
+      // A manifest edited by hand, or shipped in a repo, could name a file outside the project.
+      if (relative(project, file) !== rel) {
+        output.err(`${rel}: not a path inside the project, so it's left alone`);
+        left++;
+        continue;
+      }
       if (!fs.existsSync(file)) {
         output.err(`${rel}: deleted, so it's left as it is (the original is in ${kept})`);
         left++;
