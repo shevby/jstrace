@@ -181,6 +181,23 @@ test('targets outside the project, missing, or a bad config fail', (t) => {
   assert.match(err[0], /"include" must be an array/);
 });
 
+test('init creates the config and .jstrace/ before anything is instrumented, keeping a config there', (t) => {
+  const dir = copyFixture(t, 'app');
+  assert.deepEqual(run(dir, 'init'), { code: 0, out: [`Created jstrace.config.json with the defaults in ${dir}. Edit it, then instrument.`], err: [] });
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'jstrace.config.json'), 'utf8')).maxDepth, 3);
+  assert.match(fs.readFileSync(path.join(dir, '.jstrace', '.gitignore'), 'utf8'), /^\*$/m);
+  assert.ok(!fs.existsSync(projectAt(dir).backup), 'nothing instrumented');
+  assert.equal(file(dir, 'index.js').current, file(dir, 'index.js').original);
+
+  fs.writeFileSync(path.join(dir, 'jstrace.config.json'), '{ "maxDepth": 5 }');
+  fs.mkdirSync(path.join(dir, 'lib', 'deep'));
+  assert.deepEqual(run(path.join(dir, 'lib', 'deep'), 'init').out, [`Kept jstrace.config.json as it is in ${dir}. Edit it, then instrument.`], 'the project above');
+  assert.equal(fs.readFileSync(path.join(dir, 'jstrace.config.json'), 'utf8'), '{ "maxDepth": 5 }');
+  fs.writeFileSync(path.join(dir, 'jstrace.config.json'), '{ "maxDepth": "deep" }');
+  assert.equal(run(dir, 'init').code, 1, 'a bad config fails');
+  assert.equal(run(dir, 'init', 'lib').code, 2);
+});
+
 test('mock creates a mock from the template and names it in the config; tracing loads it, never instrumented', (t) => {
   const dir = copyFixture(t, 'app');
   const { code, out } = run(dir, 'mock');

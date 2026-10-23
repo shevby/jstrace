@@ -48,7 +48,7 @@ To use the CLI on its own, run `node <this repo>/cli/bin/jstrace.js`, or install
 
 ### In VSCode
 
-1. In the Explorer, right-click the folder (or files) to trace and choose **jstrace: Inject**. The first time, this creates `jstrace.config.json` with the defaults.
+1. In the Explorer, right-click the folder (or files) to trace and choose **jstrace: Inject**. The first time, this creates `jstrace.config.json` with the defaults. To change the config before anything is injected, first right-click any folder and choose **jstrace: Init** (also in the command palette, and a button in the empty Calls view): it creates the config and `.jstrace/`, and opens the config.
 2. Run your program as you always do, for example `node index.js`.
 3. Open the **jstrace** view in the activity bar. Each run is a log there, newest first; expand it to see its calls.
 4. When you're done, click **Restore Original Files** in the view's title bar.
@@ -57,6 +57,7 @@ To use the CLI on its own, run `node <this repo>/cli/bin/jstrace.js`, or install
 
 ```sh
 cd my-project
+jstrace init                # optional: creates jstrace.config.json to edit first
 jstrace instrument .        # or: jstrace instrument src lib/util.js
 node index.js               # writes .jstrace/logs/<time>-<pid>.jsonl and .txt
 jstrace restore             # puts every original file back
@@ -64,6 +65,7 @@ jstrace restore             # puts every original file back
 
 | Command | What it does |
 | --- | --- |
+| `jstrace init` | Creates `jstrace.config.json` with the defaults (or checks the one there) and `.jstrace/`, so you can configure tracing before instrumenting anything. |
 | `jstrace instrument <path...>` | Injects tracing into the files under the paths. The originals go to `.jstrace/backup/`. Instrumenting again starts from the originals, so it picks up config changes. |
 | `jstrace restore [path...]` | Puts the originals back: all of them, or those under the paths. A file you edited since it was instrumented is left alone, and reported. Logs stay. |
 | `jstrace mock [file]` | Creates a mock of what tracing uses from a template, and names it in the config. See [Mocking the runtime](#mocking-the-runtime). |

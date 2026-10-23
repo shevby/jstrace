@@ -290,6 +290,28 @@ function count(n, noun) {
 }
 
 /**
+ * `jstrace init`: makes the project ready to configure before anything is instrumented
+ * (4.17): `jstrace.config.json` with the defaults (one there already is only checked), and
+ * `.jstrace/` with its `.gitignore`.
+ * @param {Project} project
+ * @param {string[]} targets none
+ * @param {string} cwd
+ * @param {Output} output
+ * @returns {number} the exit code
+ */
+function init(project, targets, cwd, output) {
+  try {
+    const { created } = loadConfig(project.config);
+    keepOutOfGit(project);
+    output.out(`${created ? `Created ${CONFIG_FILE} with the defaults` : `Kept ${CONFIG_FILE} as it is`} in ${project.dir}. Edit it, then instrument.`);
+    return 0;
+  } catch (error) {
+    output.err(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+}
+
+/**
  * `jstrace mock [file]`: creates a mock module from the template (4.15), unless the file is
  * there already, and names it in the config (created with the defaults when missing), so
  * tracing loads it once the files are instrumented again.
@@ -323,4 +345,4 @@ function createMock(project, targets, cwd, output) {
   }
 }
 
-module.exports = { instrument, restore, createMock, readManifest, MOCK_FILE };
+module.exports = { init, instrument, restore, createMock, readManifest, MOCK_FILE };

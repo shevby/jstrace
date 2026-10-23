@@ -399,6 +399,20 @@ test('the tree follows a log as it is written, keeping its items', (t) => {
   assert.equal(provider.changed.fired.length, 1, 'nothing new, nothing refreshed');
 });
 
+test('Init creates the config and .jstrace/ in the workspace folder, and opens the config', async (t) => {
+  const dir = copyFixture(t, 'app');
+  const fake = activate(dir);
+  await fake.commands['jstrace.init']({ fsPath: path.join(dir, 'lib'), scheme: 'file' });
+  assert.deepEqual(fake.messages, [`info: Created jstrace.config.json with the defaults in ${dir}. Edit it, then instrument.`]);
+  assert.ok(fs.existsSync(path.join(dir, '.jstrace', '.gitignore')));
+  assert.equal(fake.opened.pop().file, path.join(dir, 'jstrace.config.json'));
+  assert.ok(!fs.existsSync(path.join(dir, '.jstrace', 'backup')), 'nothing injected');
+  await fake.commands['jstrace.init']();
+  assert.equal(fake.messages.pop(), `info: Kept jstrace.config.json as it is in ${dir}. Edit it, then instrument.`, 'the only workspace folder, from the command palette');
+  await fake.commands['jstrace.init']({ fsPath: path.dirname(dir), scheme: 'file' });
+  assert.match(fake.messages.pop() ?? '', /^error: jstrace: .* isn't in a workspace folder\.$/);
+});
+
 test('the Search view finds calls in every log; a double-click shows one in the Calls view', async (t) => {
   const dir = copyFixture(t, 'app');
   const folder = path.join(dir, '.jstrace', 'logs');
