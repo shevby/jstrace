@@ -35,3 +35,4 @@ All done; see [DONE.md](DONE.md).
 - [ ] 4.8 Call durations: "took 12 ms" in a call's description (from its `call` and `return` times; async waits included), and a command listing a log's slowest calls. *(proposed)*
 - [ ] 4.9 From code to calls: a CodeLens above each traced function in the editor ("called 12 times, last ← 120") from the selected log; clicking it reveals those calls in the tree. *(proposed)*
 - [ ] 4.11 Copy a value: context-menu commands copying a call's arguments or return value as JSON. *(proposed)*
+- [ ] 4.18 Find Calls at This Line inside a function's body: when nothing was called from the line, list the calls of the function around the cursor (found with VSCode's document symbols, since the logs have no function ends). *(proposed)*
