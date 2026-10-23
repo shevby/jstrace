@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const zlib = require('node:zlib');
 const { copyFixture } = require('../test/helpers');
-const { cliCommand, runCli } = require('./cli');
+const { cliScript, runCli } = require('./cli');
 const { pack, crc32 } = require('./pack');
 
 /**
@@ -56,10 +56,9 @@ test('the .vsix holds the extension and a CLI that runs from it', async (t) => {
     fs.mkdirSync(path.dirname(path.join(installed, name)), { recursive: true });
     fs.writeFileSync(path.join(installed, name), data);
   }
-  const command = cliCommand('', path.join(installed, 'extension'));
-  assert.deepEqual(command.args, [path.join(installed, 'extension', 'cli', 'bin', 'jstrace.js')]);
+  assert.equal(cliScript(path.join(installed, 'extension')), path.join(fs.realpathSync(installed), 'extension', 'cli', 'bin', 'jstrace.js'));
   const dir = copyFixture(t, 'app');
-  const result = await runCli(command, ['instrument', 'lib/math.js'], dir);
+  const result = await runCli(path.join(installed, 'extension'), ['instrument', 'lib/math.js'], dir);
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /Instrumented 1 file/);
 });

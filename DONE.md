@@ -74,6 +74,7 @@ These are completed roadmap items, moved out of [ROADMAP.md](ROADMAP.md) to keep
   - `vscode/logs.js` parses the `.jsonl` (skipping a line cut short) and makes the text, with no `vscode` needed.
 - [x] 3.2 Jump to code: clicking a call or load opens the original file at the function (the line is exact even while instrumented; the column may be off a little).
 - [x] 3.3 Setting `jstrace.cliPath`: a `.js` script (run with VSCode's own Node via `ELECTRON_RUN_AS_NODE`) or a program (through `cmd.exe` on Windows, arguments quoted). Empty takes the CLI packed in the extension, else the repo's `cli/` beside it, else `jstrace` on the PATH (`vscode/cli.js`).
+  - Later dropped: since 3.8 the CLI is packed in the extension, and the setting (overridable by a workspace) let a repo run a script of its own. The extension runs only its own CLI now, packed in it or the repo's beside it.
 - [x] 3.4 "jstrace: Inject" (once "Inject jstrace") in the explorer's context menu (folders and files, several at once): runs `jstrace instrument <them>` in each one's workspace folder. It reports the CLI's summary and what it skipped; everything goes to the "jstrace" output channel.
 - [x] 3.5 Restore: a view button and command running `jstrace restore` in each project with a backup, reporting files it left alone.
 - [x] 3.6 Refresh and clear logs (with a confirmation) buttons. `.jstrace/` is detected in each workspace folder, and a watcher refreshes the list when logs are added or deleted. A log's inline button opens its `.txt`. A welcome text explains how to start.

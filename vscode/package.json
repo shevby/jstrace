@@ -384,12 +384,6 @@
     "configuration": {
       "title": "jstrace",
       "properties": {
-        "jstrace.cliPath": {
-          "type": "string",
-          "default": "",
-          "scope": "machine-overridable",
-          "markdownDescription": "The `jstrace` CLI: a `.js` script (run with VSCode's own Node) or a program such as `jstrace` on the PATH. A relative path is taken from the workspace folder. Empty uses the CLI packed in the extension (or the `cli/` beside it in the jstrace repo), or else `jstrace` on the PATH."
-        },
         "jstrace.stepHint": {
           "type": "string",
           "enum": [
