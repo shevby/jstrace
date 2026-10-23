@@ -101,8 +101,11 @@ Each log is one process, labeled by its script and arguments, with its start tim
 
 On macOS, `Alt` is `⌥ Option`. The same steps are in the context menu, under **Step**.
 
+A step (or a click on a call) highlights the line, with the call's arguments and outcome above it. Click that text for the call's details, or hover the line to see them in full. The setting `jstrace.stepHint` moves the text to the end of the line, or shows it only on hover. Its colors are the theme colors `jstrace.stepBackground` and `jstrace.stepForeground`, which you can change in `workbench.colorCustomizations`.
+
 | Setting | Default | What it does |
 | --- | --- | --- |
+| `jstrace.stepHint` | `above` | Where a step shows the call's values: `above` the line (a CodeLens, or at the end where CodeLens is off), at its `end`, or only on `hover`. |
 | `jstrace.groupRepeats` | `5` | How many calls of a function under one call make a group; `0` for no groups. |
 | `jstrace.cliPath` | empty | The CLI to run: a `.js` script or a program. Empty means the one packed in the extension. |
 

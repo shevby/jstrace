@@ -381,6 +381,21 @@
           "scope": "machine-overridable",
           "markdownDescription": "The `jstrace` CLI: a `.js` script (run with VSCode's own Node) or a program such as `jstrace` on the PATH. A relative path is taken from the workspace folder. Empty uses the CLI packed in the extension (or the `cli/` beside it in the jstrace repo), or else `jstrace` on the PATH."
         },
+        "jstrace.stepHint": {
+          "type": "string",
+          "enum": [
+            "above",
+            "end",
+            "hover"
+          ],
+          "enumDescriptions": [
+            "Above the line, as a CodeLens (at the end of the line where CodeLens is off). Click it for the call's details.",
+            "At the end of the line.",
+            "Only when hovering the line."
+          ],
+          "default": "above",
+          "markdownDescription": "Where a step (or a click on a call) shows the call's arguments and outcome. Hovering the highlighted line shows them in full either way. Their colors are the theme colors `jstrace.stepBackground` and `jstrace.stepForeground` (`workbench.colorCustomizations`)."
+        },
         "jstrace.groupRepeats": {
           "type": "integer",
           "default": 5,
@@ -389,6 +404,28 @@
         }
       }
     },
+    "colors": [
+      {
+        "id": "jstrace.stepBackground",
+        "description": "The background of the line a jstrace step (or a click on a call) shows.",
+        "defaults": {
+          "dark": "editor.stackFrameHighlightBackground",
+          "light": "editor.stackFrameHighlightBackground",
+          "highContrast": "editor.stackFrameHighlightBackground",
+          "highContrastLight": "editor.stackFrameHighlightBackground"
+        }
+      },
+      {
+        "id": "jstrace.stepForeground",
+        "description": "The call's values at the end of the line a jstrace step shows (jstrace.stepHint \"end\").",
+        "defaults": {
+          "dark": "editorCodeLens.foreground",
+          "light": "editorCodeLens.foreground",
+          "highContrast": "editorCodeLens.foreground",
+          "highContrastLight": "editorCodeLens.foreground"
+        }
+      }
+    ],
     "submenus": [
       {
         "id": "jstrace.step",
