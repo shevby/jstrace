@@ -48,7 +48,7 @@ To use the CLI on its own, run `node <this repo>/cli/bin/jstrace.js`, or install
 
 ### In VSCode
 
-1. In the Explorer, right-click the folder (or files) to trace and choose **Inject jstrace**. The first time, this creates `jstrace.config.json` with the defaults.
+1. In the Explorer, right-click the folder (or files) to trace and choose **jstrace: Inject**. The first time, this creates `jstrace.config.json` with the defaults.
 2. Run your program as you always do, for example `node index.js`.
 3. Open the **jstrace** view in the activity bar. Each run is a log there, newest first; expand it to see its calls.
 4. When you're done, click **Restore Original Files** in the view's title bar.
@@ -87,7 +87,7 @@ Each log is one process, labeled by its script and arguments, with its start tim
 
 **Search** (the magnifier button) finds calls in every log by function name, arguments, result or `file:line`. Every word must match, ignoring case. Results appear in the **Search** view. A click goes to the code, and a double-click shows the call in the Calls view.
 
-**Find Calls at This Line** (the editor's context menu, or the command palette) lists in the Search view the calls at the cursor's line: those made from it, and those of a function defined on it.
+**jstrace: Find Calls at This Line** (the editor's context menu, or the command palette) lists in the Search view the calls at the cursor's line: those made from it, and those of a function defined on it.
 
 **Stepping**: with the Calls or Search view focused, step through a run in the order it happened:
 
