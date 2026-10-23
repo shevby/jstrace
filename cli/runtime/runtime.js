@@ -36,6 +36,9 @@
  * loads, yields) is serialized or written. When the call ends (or the process, for the top
  * level or a call still running), `skip` events tell how many went unlogged, in its last
  * logged part, before its return or throw.
+ *
+ * Paths (4.19): a file in the project is logged relative to it, with `/`, so the logs can be
+ * read on another machine; one outside it (a call site in a global module) as it is.
  */
 
 /**
@@ -70,15 +73,15 @@
  * The per-process runtime, `globalThis.__jt`.
  * @typedef {object} Runtime
  * @property {(file: string, functions: FunctionInfo[], calls?: FunctionInfo[]) => Module} load an
- *   instrumented file starts running; `calls` are those going through the runtime, as callee
- *   names and positions
+ *   instrumented file (its absolute path) starts running; `calls` are those going through the
+ *   runtime, as callee names and positions
  */
 
 /**
  * What the instrumenter passes to the runtime, from the project and its config.
  * @typedef {object} RuntimeOptions
  * @property {string} [logs] the folder to write logs in; nothing is logged without one
- * @property {string} [root] the project's folder; the `.txt` tree shows paths relative to it
+ * @property {string} [root] the project's folder: the logs give the paths in it relative to it (4.19)
  * @property {number} [maxDepth]
  * @property {number} [maxString]
  * @property {number} [maxLine]
@@ -104,8 +107,8 @@
  * @property {() => Date} [date] when the process started, in the log's name and `start` event
  * @property {() => ({ file: string, line: number } | null)} [site] where the call starting now
  *   was made (with `callSites` on); `null` for unknown
- * @property {(listener: () => void) => void} [onExit] calls `listener` once, as the process
- *   ends: calls skipped at the top level are logged then
+ * @property {(listener: (code?: number) => void) => void} [onExit] calls `listener` once, as the
+ *   process ends, with its exit code: calls skipped at the top level are logged then, and `end`
  * @property {(message: string) => void} [warn] tells the user something went wrong, like logs that can't be written
  */
 
@@ -171,6 +174,9 @@ function createRuntime(require, options) {
   const env = hook('env', (/** @type {string} */ name) => (proc && proc.env ? proc.env[name] : undefined));
   const folder = env('JSTRACE_OUT') || options.logs || '';
   const root = (options.root || '').replace(/[\\/]+$/, '');
+  // what a path in the project starts with: `/` for separators, and lower case on Windows
+  const windows = /^(?:[A-Za-z]:|[\\/]{2})/.test(root);
+  const rootKey = (windows ? root.toLowerCase() : root).replace(/\\/g, '/');
   const pid = hook('pid', () => (proc && proc.pid ? proc.pid : Math.floor(Math.random() * 1e9)))();
   const clock = hook('now', typeof performance === 'object' && typeof performance.now === 'function' ? () => performance.now() : () => Date.now());
   const origin = clock();
@@ -193,7 +199,6 @@ function createRuntime(require, options) {
   const topLevel = { made: new Map(), skipped: new Map(), unlogged: 0 };
   /** @type {Map<Repeats, EntryCall | null>} those with skipped calls not reported yet, and their call */
   const unreported = new Map();
-  let exitHooked = false;
 
   /**
    * The program's mock: `globalThis.__jstraceMock`, else the module the config's `mock`
@@ -276,8 +281,22 @@ function createRuntime(require, options) {
     txt = fs.openSync(`${base}.txt`, 'a', 0o600);
     const argv = hook('argv', () => (proc && Array.isArray(proc.argv) ? proc.argv : []))().map(String);
     const cwd = hook('cwd', () => (proc && typeof proc.cwd === 'function' ? proc.cwd() : null))();
-    fs.writeSync(jsonl, oneLine(JSON.stringify({ type: 'start', pid, argv, cwd, started: started.toISOString(), time: 0 })) + '\n');
+    const project = root ? { root } : {};
+    fs.writeSync(jsonl, oneLine(JSON.stringify({ type: 'start', pid, argv, cwd, ...project, started: started.toISOString(), time: 0 })) + '\n');
     fs.writeSync(txt, oneLine(`jstrace: process ${pid} started ${started.toISOString()}: ${argv.slice(1).join(' ')}`) + '\n');
+    onExit(end);
+  }
+
+  /**
+   * Logs what's still unreported, then that the process ended (so a log copied elsewhere,
+   * where another process may have its pid, doesn't look like it's still running).
+   * @param {unknown} [code] the exit code, when known
+   * @returns {void}
+   */
+  function end(code) {
+    unreported.forEach((call, counted) => report(counted, call));
+    const known = typeof code === 'number';
+    write({ type: 'end', ...(known ? { code } : {}), time: time() }, 0, `jstrace: process ${pid} ended${known ? ` with code ${code}` : ''}`);
   }
 
   /**
@@ -309,13 +328,18 @@ function createRuntime(require, options) {
   }
 
   /**
-   * A file as the tree shows it: relative to the project, if it's in it.
+   * A file as the logs give it: relative to the project, with `/`, if it's in it (so the
+   * logs can be read where the project is elsewhere); else as it is. Case is ignored on
+   * Windows, where Node may give `d:\…` for `D:\…`.
    * @param {string} file
    * @returns {string}
    */
   function where(file) {
-    const inRoot = root !== '' && file.startsWith(root) && /[\\/]/.test(file.charAt(root.length));
-    return (inRoot ? file.slice(root.length + 1) : file).replace(/\\/g, '/');
+    if (root === '' || typeof file !== 'string') return file;
+    const slashed = file.replace(/\\/g, '/');
+    const head = slashed.slice(0, rootKey.length);
+    const inRoot = (windows ? head.toLowerCase() : head) === rootKey && slashed.charAt(rootKey.length) === '/';
+    return inRoot ? slashed.slice(rootKey.length + 1) : file;
   }
 
   /**
@@ -329,7 +353,8 @@ function createRuntime(require, options) {
    * @returns {{ file: string, line: number } | null}
    */
   function siteOf() {
-    return callSites ? site() : null;
+    const found = callSites ? site() : null;
+    return found ? { file: where(found.file), line: found.line } : null;
   }
 
   /**
@@ -395,17 +420,13 @@ function createRuntime(require, options) {
 
   /**
    * Keeps what a call (or the top level) skipped to be reported, at the latest when the
-   * process exits.
+   * process exits (`end`).
    * @param {Repeats} repeats
    * @param {EntryCall | null} owner
    * @returns {void}
    */
   function track(repeats, owner) {
     unreported.set(repeats, owner);
-    if (!exitHooked) {
-      exitHooked = true;
-      onExit(() => unreported.forEach((call, counted) => report(counted, call)));
-    }
   }
 
   /**
@@ -427,7 +448,7 @@ function createRuntime(require, options) {
       write(
         { type: 'skip', parent: entry ? entry.id : null, name, file, line, column, count, ...(resumes ? { resumes } : {}), time: time() },
         entry ? entry.depth + 1 : 0,
-        `… ${name}() ${resumes ? 'resumed' : 'called'} ${count} more ${count === 1 ? 'time' : 'times'}, not logged  ${where(file)}:${line}`,
+        `… ${name}() ${resumes ? 'resumed' : 'called'} ${count} more ${count === 1 ? 'time' : 'times'}, not logged  ${file}:${line}`,
       );
     });
     repeats.skipped.clear();
@@ -772,7 +793,7 @@ function createRuntime(require, options) {
       write(
         { type: 'call', id, parent: entry.parent, depth: entry.depth, name, file, line, column, args: logged, ...(external ? { external } : site ? { site } : {}), time: time() },
         entry.depth,
-        `${name}(${shown}) #${id}  ${where(file)}:${line}${external ? '  (not traced)' : site ? `  (from ${where(site.file)}:${site.line})` : ''}`,
+        `${name}(${shown}) #${id}  ${file}:${line}${external ? '  (not traced)' : site ? `  (from ${site.file}:${site.line})` : ''}`,
       );
     }
 
@@ -885,17 +906,18 @@ function createRuntime(require, options) {
       write(
         { type: 'resume', id: entry.id, call: id, parent: entry.parent, depth: entry.depth, name, file, line, column, time: time() },
         entry.depth,
-        `↻ ${name}() #${id} resumed  ${where(file)}:${line}`,
+        `↻ ${name}() #${id} resumed  ${file}:${line}`,
       );
     }
   }
 
   return {
-    load(file, functions, calls = []) {
+    load(absolute, functions, calls = []) {
+      const file = where(absolute);
       const top = stack[stack.length - 1];
       const depth = top ? top.depth + 1 : 0;
       if (!top || !top.muted) {
-        write({ type: 'load', id: nextId++, parent: top ? top.id : null, depth, file, time: time() }, depth, `load ${where(file)}`);
+        write({ type: 'load', id: nextId++, parent: top ? top.id : null, depth, file, time: time() }, depth, `load ${file}`);
       }
       return {
         enter: (index, args) => (off || busy ? NOOP : new Call(functions[index], file, args)),

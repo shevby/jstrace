@@ -275,6 +275,27 @@ test("isRunning tells whether a log's process still runs", () => {
   const { pid } = spawnSync(process.execPath, ['-e', '0']);
   assert.equal(logs.isRunning(logs.parseLog(JSON.stringify({ type: 'start', pid })), now, now), false);
   assert.equal(logs.isRunning(logs.parseLog(''), now, now), false);
+  const ended = logs.parseLog([{ type: 'start', pid: process.pid }, { type: 'end', code: 0 }].map((event) => JSON.stringify(event)).join('\n'));
+  assert.equal(logs.isRunning(ended, now, now), false, 'it logged its end: a copied log whose pid is taken here');
+});
+
+test("a log from another machine shows this project's files (4.19)", () => {
+  const text = [
+    { type: 'start', pid: 7, argv: ['C:\\node.exe', 'C:\\Users\\a\\app\\src\\main.js', '-v'], cwd: 'C:\\Users\\a\\app', root: 'c:\\users\\a\\app', started: '2026-10-23T10:00:00.000Z', time: 0 },
+    { type: 'load', id: 1, parent: null, depth: 0, file: 'src/main.js', time: 1 },
+    { type: 'call', id: 2, parent: 1, depth: 1, name: 'f', file: 'src/lib.js', line: 2, column: 0, args: {}, site: { file: 'src/main.js', line: 5 }, time: 2 },
+    { type: 'call', id: 3, parent: 1, depth: 1, name: 'g', file: 'C:\\Users\\a\\global\\g.js', line: 1, column: 0, args: {}, time: 3 },
+    { type: 'end', code: 0, time: 4 },
+  ].map((event) => JSON.stringify(event)).join('\n');
+  const trace = logs.parseLog(text, ROOT);
+  const [f, g] = trace.roots[0].children.map((node) => node.event);
+  assert.deepEqual([trace.roots[0].event.file, f.file, f.site.file], [file('src/main.js'), file('src/lib.js'), file('src/main.js')]);
+  assert.equal(g.file, 'C:\\Users\\a\\global\\g.js', 'outside the project, as it was');
+  assert.equal(logs.logLabel(trace, 'x.jsonl', ROOT), 'src/main.js -v', 'the script relative to where the project was, ignoring case');
+  assert.deepEqual(logs.searchAt(trace, file('src/main.js'), 5), [trace.nodes.get(2)]);
+  const { txt } = logs.mergeLogs([{ file: 'x.jsonl', text, name: 'app' }], ROOT);
+  assert.match(txt, /f\(\) #2 {2}src\/lib\.js:2 {2}\(from src\/main\.js:5\)/);
+  assert.match(txt, /jstrace: process 7 ended with code 0\n$/);
 });
 
 test('relativePath keeps a path outside the project as it is', () => {

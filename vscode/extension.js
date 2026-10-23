@@ -309,7 +309,7 @@ class CallsProvider {
       let item = this.logItems.get(file);
       if (!item) {
         item = {
-          kind: 'log', file, root: folder.uri.fsPath, project, offset: 0, running: false, trace: logs.parseLog(''), nodes: new Map(), rows: new Map(), parents: new Map(),
+          kind: 'log', file, root: folder.uri.fsPath, project, offset: 0, running: false, trace: logs.parseLog('', folder.uri.fsPath), nodes: new Map(), rows: new Map(), parents: new Map(),
         };
         this.logItems.set(file, item);
       }

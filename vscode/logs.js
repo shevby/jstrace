@@ -36,6 +36,8 @@ const NOT_TRACED = "Not traced (a built-in, or in a file that isn't instrumented
  * @property {TraceNode[]} roots the nodes with no parent, in order
  * @property {Record<string, any>[]} skips the `skip` events with no parent
  * @property {Map<number, TraceNode>} nodes every node by id
+ * @property {Record<string, any> | undefined} end its `end` event: the process ended
+ * @property {string} root the project folder here, which the log's relative paths are resolved against
  */
 
 /**
@@ -50,17 +52,32 @@ const NOT_TRACED = "Not traced (a built-in, or in a file that isn't instrumented
  * @property {Record<string, any>} [skip] a group's `skip` event, when calls of it weren't logged
  */
 
+/** What an absolute path starts with, on Windows or elsewhere, whichever machine wrote the log. */
+const ABSOLUTE = /^(?:[A-Za-z]:[\\/]|[\\/])/;
+
 /**
  * Builds the call trees of a log. A line that isn't JSON (one being written, or cut short by
- * a crash) is skipped.
+ * a crash) is skipped. The paths the runtime logged relative to the project (4.19) are made
+ * absolute, in `root`, so a log from another machine shows this one's files.
  * @param {string} text the `.jsonl` file's content
+ * @param {string} [root] the project folder
  * @returns {Trace}
  */
-function parseLog(text) {
+function parseLog(text, root = '') {
   /** @type {Trace} */
-  const trace = { start: undefined, roots: [], skips: [], nodes: new Map() };
+  const trace = { start: undefined, roots: [], skips: [], nodes: new Map(), end: undefined, root };
   appendLog(trace, text);
   return trace;
+}
+
+/**
+ * A path from a log, absolute: in the project when it was logged relative to it.
+ * @param {string} root the project folder
+ * @param {unknown} file
+ * @returns {unknown}
+ */
+function resolveIn(root, file) {
+  return typeof file === 'string' && root !== '' && !ABSOLUTE.test(file) ? path.join(root, file) : file;
 }
 
 /**
@@ -79,8 +96,12 @@ function appendLog(trace, text) {
       continue;
     }
     if (event === null || typeof event !== 'object') continue;
+    if ('file' in event) event.file = resolveIn(trace.root, event.file);
+    if (event.site && typeof event.site === 'object') event.site.file = resolveIn(trace.root, event.site.file);
     if (event.type === 'start') {
       trace.start = event;
+    } else if (event.type === 'end') {
+      trace.end = event;
     } else if (event.type === 'load' || event.type === 'call' || event.type === 'resume') {
       const parent = event.parent === null ? undefined : trace.nodes.get(event.parent);
       /** @type {TraceNode} */
@@ -122,7 +143,7 @@ function appendLog(trace, text) {
 function readMore(file, tail) {
   const size = fs.statSync(file).size;
   if (size < tail.offset) {
-    tail.trace = parseLog('');
+    tail.trace = parseLog('', tail.trace.root);
     tail.offset = 0;
   }
   if (size === tail.offset) return false;
@@ -141,8 +162,9 @@ function readMore(file, tail) {
 }
 
 /**
- * Whether a log's process still runs: one with its pid exists, and the log changed lately
- * (so an old log whose pid was taken by another process doesn't look alive for long).
+ * Whether a log's process still runs: it didn't log its end, one with its pid exists, and
+ * the log changed lately (so an old log whose pid was taken by another process, or one
+ * copied from another machine, doesn't look alive for long).
  * @param {Trace} trace
  * @param {number} modified when the log last changed, in ms since the epoch
  * @param {number} [now]
@@ -150,7 +172,7 @@ function readMore(file, tail) {
  */
 function isRunning(trace, modified, now = Date.now()) {
   const pid = trace.start?.pid;
-  if (typeof pid !== 'number' || now - modified > 30 * 60 * 1000) return false;
+  if (trace.end || typeof pid !== 'number' || now - modified > 30 * 60 * 1000) return false;
   try {
     process.kill(pid, 0);
     return true;
@@ -214,10 +236,11 @@ function rows(nodes, skips, min) {
 /**
  * Reads and parses a log file.
  * @param {string} file the `.jsonl` file
+ * @param {string} [root] the project folder
  * @returns {Trace}
  */
-function readLog(file) {
-  return parseLog(fs.readFileSync(file, 'utf8'));
+function readLog(file, root) {
+  return parseLog(fs.readFileSync(file, 'utf8'), root);
 }
 
 /**
@@ -265,14 +288,20 @@ function textOf(file) {
 }
 
 /**
- * A path shown relative to the project, with `/`, or as it is when it's outside.
+ * A path shown relative to the project, with `/`, or as it is when it's outside. The project
+ * may be another machine's (a `start` event's `root`), so this works on the text alone,
+ * ignoring case for a Windows path.
  * @param {string} root the project folder
- * @param {string} file an absolute path
+ * @param {string} file a path, absolute or relative to the project
  * @returns {string}
  */
 function relativePath(root, file) {
-  const rel = path.relative(root, file);
-  return rel === '' || rel.startsWith('..') || path.isAbsolute(rel) ? file : rel.replaceAll('\\', '/');
+  const slashed = file.replaceAll('\\', '/');
+  if (!ABSOLUTE.test(file)) return slashed;
+  const base = root.replaceAll('\\', '/').replace(/\/+$/, '');
+  const head = slashed.slice(0, base.length);
+  const same = /^(?:[A-Za-z]:|\/\/)/.test(base) ? head.toLowerCase() === base.toLowerCase() : head === base;
+  return base !== '' && same && slashed.charAt(base.length) === '/' ? slashed.slice(base.length + 1) : file;
 }
 
 /**
@@ -297,7 +326,8 @@ function logLabel(trace, file, root) {
   const argv = trace.start?.argv;
   if (!Array.isArray(argv) || argv.length === 0) return path.basename(file);
   if (argv.length === 1) return path.basename(String(argv[0]));
-  return [relativePath(root, String(argv[1])), ...argv.slice(2).map(String)].join(' ');
+  // the script's path as it was where the process ran
+  return [relativePath(typeof trace.start?.root === 'string' ? trace.start.root : root, String(argv[1])), ...argv.slice(2).map(String)].join(' ');
 }
 
 /**
@@ -778,7 +808,8 @@ function setName(file, name) {
 function defaultName(trace, file) {
   const argv = trace.start?.argv;
   const script = Array.isArray(argv) && argv.length > 1 ? String(argv[1]) : file;
-  return path.basename(script).replace(/\.[^.]*$/, '') || 'process';
+  // either separator: the log may be from another system
+  return (script.split(/[\\/]/).pop() ?? '').replace(/\.[^.]*$/, '') || 'process';
 }
 
 /**
@@ -828,7 +859,7 @@ function mergeLogs(sources, root) {
     const start = events.find((event) => event.type === 'start');
     const began = Date.parse(start?.started);
     if (!start || isNaN(began)) throw new Error(`${path.basename(source.file)} has no start, so it can't be merged`);
-    processes.push({ name: source.name, pid: start.pid, argv: start.argv, cwd: start.cwd, started: start.started, file: path.basename(source.file) });
+    processes.push({ name: source.name, pid: start.pid, argv: start.argv, cwd: start.cwd, root: start.root, started: start.started, file: path.basename(source.file) });
     for (const event of events) if (event.type !== 'start') all.push({ event, index, at: began + (Number(event.time) || 0) });
   });
   all.sort((a, b) => a.at - b.at); // stable, so each process's events keep their order
@@ -878,6 +909,8 @@ function textLine(event, root) {
       return `↻ ${event.name}() #${event.call} resumed  ${where(event.file)}:${event.line}`;
     case 'skip':
       return `… ${event.name}() ${event.resumes ? 'resumed' : 'called'} ${event.count} more ${event.count === 1 ? 'time' : 'times'}, not logged  ${where(event.file)}:${event.line}`;
+    case 'end':
+      return `jstrace: process ${event.pid} ended${typeof event.code === 'number' ? ` with code ${event.code}` : ''}`;
     default:
       return formatEnd(event);
   }
