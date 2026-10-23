@@ -10,7 +10,7 @@ const vscode = require('vscode');
 const fs = require('node:fs');
 const path = require('node:path');
 const logs = require('./logs');
-const { cliCommand, runCli } = require('./cli');
+const { runCli } = require('./cli');
 
 /** @typedef {import('./logs').Trace} Trace */
 /** @typedef {import('./logs').TraceNode} TraceNode */
@@ -598,9 +598,8 @@ function activate(context) {
    * @returns {Promise<void>}
    */
   async function run(folder, args) {
-    const command = cliCommand(vscode.workspace.getConfiguration('jstrace').get('cliPath', ''), context.extensionPath);
     output.appendLine(`> jstrace ${args.join(' ')}  (in ${folder.uri.fsPath})`);
-    const result = await runCli(command, args, folder.uri.fsPath);
+    const result = await runCli(context.extensionPath, args, folder.uri.fsPath);
     if (result.stdout) output.append(result.stdout);
     if (result.stderr) output.appendLine(result.stderr.trimEnd());
     const summary = result.stdout.trim().split('\n').pop() ?? '';

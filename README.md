@@ -109,7 +109,6 @@ A step (or a click on a call) highlights the line, with the call's arguments and
 | --- | --- | --- |
 | `jstrace.stepHint` | `above` | Where a step shows the call's values: `above` the line (a CodeLens, or at the end where CodeLens is off), at its `end`, or only on `hover`. |
 | `jstrace.groupRepeats` | `5` | How many calls of a function under one call make a group; `0` for no groups. |
-| `jstrace.cliPath` | empty | The CLI to run: a `.js` script or a program. Empty means the one packed in the extension. |
 
 ## Configuration
 

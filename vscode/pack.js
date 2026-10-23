@@ -4,8 +4,8 @@
  * Packs the extension into a `.vsix` for a local install (`npm run package`, then
  * `code --install-extension jstrace-vscode-<version>.vsix`), with no `vsce`. A `.vsix` is a
  * zip of the extension under `extension/`, plus a manifest. The CLI goes in too, with
- * acorn, under `extension/cli/`, where `cliCommand` finds it, so the installed extension
- * needs no `jstrace.cliPath`.
+ * acorn, under `extension/cli/`, where `cliScript` finds it: the installed extension runs
+ * only its own CLI.
  */
 
 const fs = require('node:fs');
