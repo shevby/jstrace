@@ -13,7 +13,7 @@ const path = require('node:path');
 const { loadConfig, ConfigError } = require('./config');
 const { filter } = require('./glob');
 const { instrumentSource, isInstrumented } = require('./instrument');
-const { CONFIG_FILE, relative } = require('./project');
+const { CONFIG_FILE, JSTRACE_DIR, relative } = require('./project');
 
 /** Where `jstrace mock` puts a mock when it's given no path. */
 const MOCK_FILE = 'jstrace.mock.js';
@@ -113,6 +113,21 @@ function collectFiles(project, target, accept) {
 }
 
 /**
+ * Creates `.jstrace/` with a `.gitignore` that ignores all of it, so the logs (which hold
+ * whatever the program passed around) and the backups are never committed. A `.gitignore`
+ * there already is left as the user made it.
+ * @param {Project} project
+ * @returns {void}
+ */
+function keepOutOfGit(project) {
+  const dir = path.join(project.dir, JSTRACE_DIR);
+  const file = path.join(dir, '.gitignore');
+  if (fs.existsSync(file)) return;
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(file, '# Made by jstrace: its logs and backups stay out of git.\n*\n');
+}
+
+/**
  * `jstrace instrument <target...>`: injects tracing into the files under the targets,
  * backing up their originals. A file instrumented already is instrumented afresh from its
  * original; one edited since, or with injected code but no backup, is left alone.
@@ -134,6 +149,7 @@ function instrument(project, targets, cwd, output) {
     output.err(error instanceof ConfigError || error instanceof Error ? error.message : String(error));
     return 1;
   }
+  keepOutOfGit(project);
   const accept = filter(config.include, config.exclude);
   const mock = config.mock ? path.resolve(project.dir, config.mock) : undefined;
   // The mock is never instrumented: it's loaded while the runtime is being made.
