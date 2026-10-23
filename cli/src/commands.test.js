@@ -119,6 +119,24 @@ test('a file edited since it was instrumented is left alone', (t) => {
   assert.deepEqual(Object.keys(readManifest(projectAt(dir)).files), ['lib/math.js']);
 });
 
+test('restore never writes outside the project, whatever the manifest names', (t) => {
+  const dir = copyFixture(t, 'app');
+  const victim = path.join(dir, '..', `${path.basename(dir)}-victim.js`);
+  fs.writeFileSync(victim, '');
+  t.after(() => fs.rmSync(victim, { force: true }));
+  fs.mkdirSync(path.join(dir, '.jstrace/backup'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.jstrace', `${path.basename(dir)}-victim.js`), 'payload');
+  const empty = 'da39a3ee5e6b4b0d3255bfef95601890afd80709'; // the hash of an empty file
+  const files = { [`../${path.basename(dir)}-victim.js`]: { hash: empty }, '.jstrace/x.js': { hash: empty }, 'lib/../index.js': { hash: empty } };
+  fs.writeFileSync(path.join(dir, '.jstrace/backup/manifest.json'), JSON.stringify({ files }));
+
+  const { out, err } = run(dir, 'restore');
+  assert.deepEqual(out, ['Restored 0 files, left 3 as they are']);
+  assert.equal(err.length, 3);
+  for (const line of err) assert.match(line, /: not a path inside the project, so it's left alone$/);
+  assert.equal(fs.readFileSync(victim, 'utf8'), '');
+});
+
 test('a file with injected code but no backup is refused', (t) => {
   const dir = copyFixture(t, 'app');
   run(dir, 'instrument', 'lib/math.js');
