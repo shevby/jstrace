@@ -556,14 +556,19 @@ function activate(context) {
   search.view = searchView;
   /** @type {{ element: SearchItem | undefined, time: number, opening: Promise<unknown> }} the last click on a result */
   const click = { element: undefined, time: 0, opening: Promise.resolve() };
-  /** The line a step is at, like a debugger's, with the call's values at its end. */
+  /** The line a step is at, like a debugger's, with the call's values at its end (`jstrace.stepHint` `end`). */
   const stepDecoration = vscode.window.createTextEditorDecorationType({
     isWholeLine: true,
-    backgroundColor: new vscode.ThemeColor('editor.stackFrameHighlightBackground'),
-    after: { color: new vscode.ThemeColor('editorCodeLens.foreground'), fontStyle: 'italic', margin: '0 0 0 2em' },
+    backgroundColor: new vscode.ThemeColor('jstrace.stepBackground'),
+    after: { color: new vscode.ThemeColor('jstrace.stepForeground'), fontStyle: 'italic', margin: '0 0 0 2em' },
   });
-  /** @type {{ item: NodeItem | undefined, editor: vscode.TextEditor | undefined, line: number }} where the last step went */
-  const stepped = { item: undefined, editor: undefined, line: -1 };
+  /**
+   * Where the last step went, and its CodeLens's text when its values are shown above the line.
+   * @type {{ item: NodeItem | undefined, editor: vscode.TextEditor | undefined, line: number, lens: string }}
+   */
+  const stepped = { item: undefined, editor: undefined, line: -1, lens: '' };
+  /** @type {vscode.EventEmitter<void>} */
+  const lensChanged = new vscode.EventEmitter();
   const output = vscode.window.createOutputChannel('jstrace');
   /** @type {Map<string, string>} the details tabs' contents, by URI */
   const details = new Map();
@@ -620,7 +625,20 @@ function activate(context) {
   function clearStep() {
     if (stepped.editor) void vscode.commands.executeCommand('setContext', 'jstrace.stepShown', false);
     stepped.editor?.setDecorations(stepDecoration, []);
-    Object.assign(stepped, { item: undefined, editor: undefined, line: -1 });
+    const lens = stepped.lens;
+    Object.assign(stepped, { item: undefined, editor: undefined, line: -1, lens: '' });
+    if (lens) lensChanged.fire();
+  }
+
+  /**
+   * Where a step shows the call's values (`jstrace.stepHint`): `above` the line (a CodeLens),
+   * at its `end`, or only on `hover`. Above needs CodeLens, so it's the end where they're off.
+   * @param {vscode.TextDocument} document
+   * @returns {string}
+   */
+  function stepHint(document) {
+    const hint = vscode.workspace.getConfiguration('jstrace').get('stepHint', 'above');
+    return hint === 'above' && !vscode.workspace.getConfiguration('editor', document.uri).get('codeLens', true) ? 'end' : hint;
   }
 
   /**
@@ -662,8 +680,8 @@ function activate(context) {
 
   /**
    * Shows a call as a step does (and a click): where it was called (its code, without a
-   * site) with the line highlighted and the call's label and outcome at its end, the editor
-   * leaving the focus where it was. Steps then go on from it.
+   * site) with the line highlighted, the call's label and outcome where `stepHint` says, and
+   * its tooltip on hover, the editor leaving the focus where it was. Steps then go on from it.
    * @param {NodeItem} item
    * @returns {Promise<void>}
    */
@@ -681,9 +699,12 @@ function activate(context) {
       const tree = provider.getTreeItem(item);
       let text = `${tree.label}${tree.description ? `  ${tree.description}` : ''}`;
       if (text.length > MAX_STEP_TEXT) text = `${text.slice(0, MAX_STEP_TEXT - 1)}…`;
-      const end = new vscode.Position(position.line, document.lineAt(position.line).text.length);
-      editor.setDecorations(stepDecoration, [{ range: new vscode.Range(end, end), renderOptions: { after: { contentText: text } } }]);
-      Object.assign(stepped, { editor, line: position.line });
+      const hint = stepHint(document);
+      const range = new vscode.Range(new vscode.Position(position.line, 0), new vscode.Position(position.line, document.lineAt(position.line).text.length));
+      const hoverMessage = new vscode.MarkdownString(logs.nodeTooltip(item.node, item.log.root));
+      editor.setDecorations(stepDecoration, [{ range, hoverMessage, ...(hint === 'end' && { renderOptions: { after: { contentText: text } } }) }]);
+      Object.assign(stepped, { editor, line: position.line, lens: hint === 'above' ? text : '' });
+      if (stepped.lens) lensChanged.fire();
       void vscode.commands.executeCommand('setContext', 'jstrace.stepShown', true); // for Esc to hide it
     } catch (error) {
       vscode.window.showErrorMessage(`jstrace: can't open ${file}: ${error instanceof Error ? error.message : String(error)}`);
@@ -695,6 +716,23 @@ function activate(context) {
     searchView,
     stepDecoration,
     { dispose: clearStep },
+    lensChanged,
+    vscode.languages.registerCodeLensProvider(
+      { scheme: 'file' },
+      {
+        onDidChangeCodeLenses: lensChanged.event,
+        /**
+         * The step's values above its line, when `jstrace.stepHint` is `above`; a click shows its details.
+         * @param {vscode.TextDocument} document
+         * @returns {vscode.CodeLens[]}
+         */
+        provideCodeLenses(document) {
+          if (!stepped.lens || document !== stepped.editor?.document) return [];
+          const at = new vscode.Position(stepped.line, 0);
+          return [new vscode.CodeLens(new vscode.Range(at, at), { title: stepped.lens, tooltip: 'Show Details', command: 'jstrace.showDetails', arguments: [stepped.item] })];
+        },
+      },
+    ),
     view.onDidChangeSelection((event) => {
       if (stepped.item && event.selection[0] !== stepped.item) clearStep(); // selected some other way
     }),

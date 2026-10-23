@@ -32,6 +32,12 @@ function fakeVscode(dir) {
   const revealed = [];
   /** @type {any[]} */
   const opened = [];
+  /** @type {Record<string, any>} the settings that aren't their defaults, by key without a section */
+  const settings = {};
+  /** @type {{ provider?: any }} the CodeLens provider */
+  const lenses = {};
+  /** @type {{ document?: any }} the document shown last */
+  const last = {};
   /** @type {Record<string, any>} the content providers, by scheme */
   const contents = {};
   const folder = { name: path.basename(dir), index: 0, uri: { fsPath: dir, scheme: 'file' } };
@@ -99,7 +105,16 @@ function fakeVscode(dir) {
     },
     ViewColumn: { Beside: -2 },
     TextEditorSelectionChangeKind: { Keyboard: 1, Mouse: 2, Command: 3 },
-    languages: { setTextDocumentLanguage: async (/** @type {any} */ document, /** @type {string} */ language) => ({ ...document, language }) },
+    CodeLens: class {
+      /** @param {any} range @param {any} command */
+      constructor(range, command) {
+        Object.assign(this, { range, command });
+      }
+    },
+    languages: {
+      setTextDocumentLanguage: async (/** @type {any} */ document, /** @type {string} */ language) => ({ ...document, language }),
+      registerCodeLensProvider: (/** @type {any} */ selector, /** @type {any} */ provider) => ((lenses.provider = provider), { dispose() {} }),
+    },
     window: {
       createTreeView: (/** @type {string} */ id, /** @type {any} */ options) =>
         (views[id] = {
@@ -124,6 +139,7 @@ function fakeVscode(dir) {
       showErrorMessage: message('error'),
       showTextDocument: async (/** @type {any} */ document, /** @type {any} */ options) => {
         opened.push({ file: document.fsPath, text: document.text, language: document.language, options });
+        last.document = document;
         return { document, setDecorations: (/** @type {any} */ type, /** @type {any[]} */ ranges) => void decorations.unshift(ranges) };
       },
       activeTextEditor: undefined,
@@ -131,7 +147,7 @@ function fakeVscode(dir) {
     workspace: {
       workspaceFolders: [folder],
       getWorkspaceFolder: (/** @type {any} */ uri) => (uri.fsPath.startsWith(dir) ? folder : undefined),
-      getConfiguration: () => ({ get: (/** @type {string} */ key, /** @type {any} */ value) => value }),
+      getConfiguration: () => ({ get: (/** @type {string} */ key, /** @type {any} */ value) => (key in settings ? settings[key] : value) }),
       createFileSystemWatcher: () => ({ onDidCreate() {}, onDidDelete() {}, dispose() {} }),
       onDidChangeWorkspaceFolders: () => ({ dispose() {} }),
       onDidChangeConfiguration: () => ({ dispose() {} }),
@@ -159,7 +175,7 @@ function fakeVscode(dir) {
       executeCommand: (/** @type {string} */ name, /** @type {any[]} */ ...args) => commands[name]?.(...args), // and the views' own
     },
   };
-  return { vscode, commands, messages, revealed, opened, inputs, picks, views, decorations, status, provider: () => views['jstrace.calls'].provider };
+  return { vscode, commands, messages, revealed, opened, inputs, picks, views, decorations, status, settings, lenses, last, provider: () => views['jstrace.calls'].provider };
 }
 
 /**
@@ -211,11 +227,29 @@ test('the extension injects, shows the call trees, jumps to code, restores and c
   const at = (file, line, character, focus = {}) => ({ file: path.join(dir, file), options: { selection: { start: { line, character }, end: { line, character } }, ...focus } });
   const opened = () => JSON.parse(JSON.stringify(fake.opened.pop()));
   assert.equal(provider.getTreeItem(factorial).contextValue, 'callSite');
+  const document = () => fake.last.document;
   await fake.commands[item.command.command](...item.command.arguments);
+  const lens = fake.lenses.provider.provideCodeLenses(document());
   assert.deepEqual(opened(), at('index.js', 25, 36, { preserveFocus: true }), 'a click shows where it was called, on the call, the tree keeping the focus');
-  assert.equal(fake.decorations[0][0].renderOptions.after.contentText, 'factorial(n: 5)  ← 120', 'with its values');
+  assert.deepEqual(JSON.parse(JSON.stringify(lens.map((/** @type {any} */ lens) => [lens.range.start, lens.command.title, lens.command.command]))), [[{ line: 25, character: 0 }, 'factorial(n: 5)  ← 120', 'jstrace.showDetails']], 'with its values above the line');
+  assert.deepEqual([fake.decorations[0][0].renderOptions, fake.decorations[0][0].range.end.line], [undefined, 25], 'the line highlighted');
+  assert.match(fake.decorations[0][0].hoverMessage.value, /Returned:/, 'its tooltip on hover');
   await fake.commands['jstrace.hideStep']();
   assert.equal(fake.decorations[0].length, 0, 'which Esc hides');
+  assert.deepEqual(fake.lenses.provider.provideCodeLenses(document()), [], 'with its CodeLens');
+  fake.settings.stepHint = 'end';
+  await fake.commands[item.command.command](...item.command.arguments);
+  assert.deepEqual(fake.lenses.provider.provideCodeLenses(document()), []);
+  assert.equal(fake.decorations[0][0].renderOptions.after.contentText, 'factorial(n: 5)  ← 120', 'or at its end');
+  Object.assign(fake.settings, { stepHint: 'above', codeLens: false });
+  await fake.commands[item.command.command](...item.command.arguments);
+  assert.deepEqual(fake.lenses.provider.provideCodeLenses(document()), [], 'at its end where CodeLens is off');
+  assert.equal(fake.decorations[0][0].renderOptions.after.contentText, 'factorial(n: 5)  ← 120');
+  Object.assign(fake.settings, { stepHint: 'hover', codeLens: true });
+  await fake.commands[item.command.command](...item.command.arguments);
+  assert.deepEqual([fake.lenses.provider.provideCodeLenses(document()), fake.decorations[0][0].renderOptions], [[], undefined], 'or only on hover');
+  fake.settings.stepHint = 'end';
+  await fake.commands['jstrace.hideStep']();
   await fake.commands['jstrace.goToSite'](factorial);
   assert.deepEqual(opened(), at('index.js', 25, 36), 'Go to Call Site: there too, the editor taking the focus to show its cursor');
   await fake.commands['jstrace.goToFunction'](factorial);
@@ -441,6 +475,7 @@ test('stepping goes through the run, showing each call where it was called with 
   const folder = path.join(dir, '.jstrace', 'logs');
   fs.mkdirSync(folder, { recursive: true });
   const fake = activate(dir);
+  fake.settings.stepHint = 'end'; // the values at the line's end
   const provider = fake.provider();
   const calls = fake.views['jstrace.calls'];
   const index = path.join(dir, 'index.js');
