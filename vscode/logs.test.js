@@ -320,6 +320,24 @@ test('listLogs lists newest first, and clearLogs deletes each log with its .txt,
   assert.deepEqual(fs.readdirSync(folder), ['notes.md']);
 });
 
+test('deleteLog deletes one log with its .txt, and only its name', (t) => {
+  const dir = copyFixture(t, 'app');
+  const folder = path.join(dir, '.jstrace', 'logs');
+  fs.mkdirSync(folder, { recursive: true });
+  const [one, two] = ['2026-01-01T00-00-00.000Z-1', '2026-02-01T00-00-00.000Z-2'].map((name) => path.join(folder, `${name}.jsonl`));
+  for (const log of [one, two]) {
+    fs.writeFileSync(log, '');
+    fs.writeFileSync(logs.textOf(log), '');
+    logs.setName(log, path.basename(log));
+  }
+  logs.deleteLog(one);
+  assert.deepEqual(fs.readdirSync(folder).sort(), [path.basename(two), path.basename(logs.textOf(two)), 'names.json']);
+  assert.deepEqual(logs.readNames(folder), { [path.basename(two)]: path.basename(two) });
+  logs.deleteLog(two);
+  logs.deleteLog(two); // gone already
+  assert.deepEqual(logs.readNames(folder), {});
+});
+
 test('processes are named in their log folder, by default after their script', (t) => {
   const dir = copyFixture(t, 'app');
   const folder = path.join(dir, '.jstrace', 'logs');

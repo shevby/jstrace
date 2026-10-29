@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const Module = require('node:module');
 const path = require('node:path');
 const { APP_OUTPUT, copyFixture } = require('../test/helpers');
+const logs = require('./logs');
 
 /**
  * Just enough of the `vscode` API for the extension to activate and its tree and commands
@@ -291,6 +292,13 @@ test('the extension injects, shows the call trees, jumps to code, restores and c
   fake.messages.length = 0;
   await fake.commands['jstrace.restore']();
   assert.deepEqual(fake.messages, ['info: Restored 7 files']);
+  const [newest, ...rest] = provider.getChildren();
+  await fake.commands['jstrace.deleteLog'](newest, [newest]);
+  assert.match(fake.messages[1], /^warning: Delete the jstrace log /);
+  assert.ok(!fs.existsSync(newest.file) && !fs.existsSync(logs.textOf(newest.file)), 'with its .txt');
+  assert.deepEqual(provider.getChildren(), rest, 'the other logs stay');
+  fs.writeFileSync(newest.file, fs.readFileSync(rest[0].file)); // for clearing: two again
+  fake.messages.length = 1;
   await fake.commands['jstrace.clearLogs']();
   assert.deepEqual(fake.messages.slice(1), ['warning: Delete 2 jstrace logs?']);
   assert.deepEqual(provider.getChildren(), []);

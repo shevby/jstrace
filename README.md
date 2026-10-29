@@ -85,7 +85,7 @@ Each log is one process, labeled by its script and arguments, with its start tim
 - **Repeated calls** of a function under one call are grouped as `name() ×count` once there are five or more (setting `jstrace.groupRepeats`).
 - **Resumes**: when an async function goes on after an `await`, the rest of it is a node of its own, `↻ name() resumed`. Clicking it shows its call.
 - **Errors**: a call that threw has a red icon.
-- **Right-click** a call for **Expand All Below**, or a log for **Open as Text**, **Merge Logs…** and **Name Process…**.
+- **Right-click** a call for **Expand All Below**, or a log for **Open as Text**, **Merge Logs…**, **Name Process…** and **Delete Log** (also `Delete`, or `Cmd+Backspace` on macOS, on the logs selected; it asks first).
 
 **Search** (the magnifier button) finds calls in every log by function name, arguments, result or `file:line`. Every word must match, ignoring case. Results appear in the **Search** view. A click goes to the code, and a double-click shows the call in the Calls view.
 

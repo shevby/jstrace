@@ -279,6 +279,17 @@ function clearLogs(folder) {
 }
 
 /**
+ * Deletes one log, its `.jsonl` and its `.txt`, and forgets its process's name.
+ * @param {string} file the `.jsonl` file
+ * @returns {void}
+ */
+function deleteLog(file) {
+  fs.rmSync(file, { force: true });
+  fs.rmSync(textOf(file), { force: true });
+  if (path.basename(file) in readNames(path.dirname(file))) setName(file, '');
+}
+
+/**
  * The readable tree written next to a log.
  * @param {string} file the `.jsonl` file
  * @returns {string} its `.txt`
@@ -942,6 +953,7 @@ module.exports = {
   readLog,
   listLogs,
   clearLogs,
+  deleteLog,
   textOf,
   relativePath,
   formatValue,
