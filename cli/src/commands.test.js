@@ -6,7 +6,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { main } = require('./cli');
-const { readManifest } = require('./commands');
+const { readInjected, readManifest } = require('./commands');
 const { isInstrumented } = require('./instrument');
 const { projectAt } = require('./project');
 const { APP_OUTPUT, FIXTURES, copyFixture } = require('../../test/helpers');
@@ -93,6 +93,31 @@ test('targets add up, and restore can take some of them', (t) => {
   assert.deepEqual(run(dir, 'restore', 'node_modules', 'lib').out, ['Restored 2 files']);
   assert.deepEqual(Object.keys(readManifest(projectAt(dir)).files), ['child.js']);
   assert.ok(!fs.existsSync(path.join(dir, '.jstrace/backup/node_modules')));
+});
+
+test('reinject instruments again the targets since all was last restored, new files in them too', (t) => {
+  const dir = copyFixture(t, 'app');
+  assert.deepEqual(run(dir, 'reinject'), { code: 1, out: [], err: ['Nothing to reinject: nothing was instrumented in this project yet'] });
+  run(dir, 'instrument', 'lib/math.js', 'node_modules/greeter');
+  run(path.join(dir, 'lib'), 'instrument', '../child.js', 'math.js');
+  assert.deepEqual(readInjected(projectAt(dir)), { targets: ['lib/math.js', 'node_modules/greeter', 'child.js'], done: false }, 'they add up');
+  run(dir, 'restore', 'lib');
+  assert.equal(readInjected(projectAt(dir)).done, false, 'not all restored');
+  run(dir, 'restore');
+  assert.equal(readInjected(projectAt(dir)).done, true);
+
+  fs.writeFileSync(path.join(dir, 'node_modules/greeter/extra.js'), 'module.exports = () => 1;');
+  fs.rmSync(path.join(dir, 'child.js'));
+  const { code, out, err } = run(path.join(dir, 'lib'), 'reinject');
+  assert.deepEqual([code, out, err], [0, ['Reinjecting lib/math.js, node_modules/greeter', 'Instrumented 3 files'], ["child.js: no longer there, so it's skipped"]]);
+  assert.ok(isInstrumented(fs.readFileSync(path.join(dir, 'node_modules/greeter/extra.js'), 'utf8')), 'a new file');
+  assert.deepEqual(readInjected(projectAt(dir)), { targets: ['lib/math.js', 'node_modules/greeter'], done: false });
+
+  run(dir, 'restore');
+  run(dir, 'instrument', '.');
+  assert.deepEqual(readInjected(projectAt(dir)).targets, ['.'], 'afresh once all was restored');
+  assert.deepEqual(run(dir, 'reinject').out.at(-1), 'Instrumented 7 files (7 of them again), skipped 1');
+  assert.equal(run(dir, 'reinject', 'x').code, 2);
 });
 
 test('a file named outright is taken whatever the filter says', (t) => {

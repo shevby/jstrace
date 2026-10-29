@@ -5,7 +5,7 @@
  * as acorn is the only dependency.
  */
 
-const { init, instrument, restore, createMock } = require('./commands');
+const { init, instrument, restore, reinject, createMock } = require('./commands');
 const { findProject } = require('./project');
 
 const USAGE = `Usage:
@@ -13,6 +13,8 @@ const USAGE = `Usage:
                                  to configure tracing before instrumenting
   jstrace instrument <path...>   inject tracing into the files under the paths
   jstrace restore [path...]      put the original files back (all, or those under the paths)
+  jstrace reinject               instrument again the paths instrumented since the last time
+                                 all was restored (or, after that, until then)
   jstrace mock [file]            create a mock of what tracing uses (file writes, clock, …) from
                                  a template, jstrace.mock.js by default, and name it in the config
   jstrace help                   show this help
@@ -47,7 +49,7 @@ function main(argv, output = consoleOutput, cwd = process.cwd()) {
     return command === undefined ? 2 : 0;
   }
   /** @type {Record<string, typeof instrument>} */
-  const commands = { init, instrument, restore, mock: createMock };
+  const commands = { init, instrument, restore, reinject, mock: createMock };
   if (!Object.hasOwn(commands, command)) {
     output.err(`Unknown command: ${command}\n\n${USAGE}`);
     return 2;
@@ -58,6 +60,10 @@ function main(argv, output = consoleOutput, cwd = process.cwd()) {
   }
   if (command === 'init' && args.length > 0) {
     output.err(`init takes no arguments: it sets up the project in the current folder\n\n${USAGE}`);
+    return 2;
+  }
+  if (command === 'reinject' && args.length > 0) {
+    output.err(`reinject takes no arguments: it instruments the paths instrumented before\n\n${USAGE}`);
     return 2;
   }
   return commands[command](findProject(cwd), args, cwd, output);

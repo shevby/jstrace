@@ -56,6 +56,43 @@ function writeManifest(project, manifest) {
 }
 
 /**
+ * The targets instrumented since nothing was, for `reinject`: kept once all is restored
+ * (`done`), and started afresh by the next `instrument` then.
+ * @typedef {object} Injected
+ * @property {string[]} targets relative to the project, `.` for the project itself
+ * @property {boolean} done whether all was restored since
+ */
+
+/**
+ * Reads the targets instrumented, or none when there's no record (or one that makes no sense).
+ * @param {Project} project
+ * @returns {Injected}
+ */
+function readInjected(project) {
+  try {
+    const data = JSON.parse(fs.readFileSync(project.injected, 'utf8'));
+    if (Array.isArray(data.targets) && data.targets.every((/** @type {unknown} */ target) => typeof target === 'string')) {
+      return { targets: data.targets, done: data.done === true };
+    }
+  } catch {
+    // none yet
+  }
+  return { targets: [], done: true };
+}
+
+/**
+ * Adds targets to the record of those instrumented, or starts it afresh once all was restored.
+ * @param {Project} project
+ * @param {string[]} rels relative to the project (`''` for the project itself)
+ * @returns {void}
+ */
+function recordTargets(project, rels) {
+  const injected = readInjected(project);
+  const targets = [...new Set([...(injected.done ? [] : injected.targets), ...rels.map((rel) => rel || '.')])];
+  fs.writeFileSync(project.injected, JSON.stringify({ targets, done: false }, null, 2) + '\n');
+}
+
+/**
  * A hash of a file's content.
  * @param {string | Buffer} content
  * @returns {string}
@@ -199,6 +236,7 @@ function instrument(project, targets, cwd, output) {
   } finally {
     writeManifest(project, manifest);
   }
+  recordTargets(project, rels);
   const instrumented = again ? ` (${again} of them again)` : '';
   output.out(`Instrumented ${count(done, 'file')}${instrumented}${skipped ? `, skipped ${skipped}` : ''}`);
   return 0;
@@ -262,8 +300,40 @@ function restore(project, targets, cwd, output) {
   } finally {
     writeManifest(project, manifest);
   }
+  const injected = readInjected(project);
+  if (Object.keys(manifest.files).length === 0 && !injected.done) {
+    fs.writeFileSync(project.injected, JSON.stringify({ ...injected, done: true }, null, 2) + '\n');
+  }
   output.out(`Restored ${count(done, 'file')}${left ? `, left ${left} as they are` : ''}`);
   return 0;
+}
+
+/**
+ * `jstrace reinject`: instruments again the targets instrumented since nothing was (or, once
+ * all was restored, until then), so new files in them are taken too. Those gone are skipped.
+ * @param {Project} project
+ * @param {string[]} targets none
+ * @param {string} cwd
+ * @param {Output} output
+ * @returns {number} the exit code
+ */
+function reinject(project, targets, cwd, output) {
+  const recorded = readInjected(project).targets;
+  if (recorded.length === 0) {
+    output.err('Nothing to reinject: nothing was instrumented in this project yet');
+    return 1;
+  }
+  const found = recorded.filter((target) => {
+    if (fs.existsSync(path.join(project.dir, target))) return true;
+    output.err(`${target}: no longer there, so it's skipped`);
+    return false;
+  });
+  if (found.length === 0) {
+    output.err('Nothing to reinject: none of the paths instrumented are there any more');
+    return 1;
+  }
+  output.out(`Reinjecting ${found.join(', ')}`);
+  return instrument(project, found, project.dir, output);
 }
 
 /**
@@ -345,4 +415,4 @@ function createMock(project, targets, cwd, output) {
   }
 }
 
-module.exports = { init, instrument, restore, createMock, readManifest, MOCK_FILE };
+module.exports = { init, instrument, restore, reinject, createMock, readManifest, readInjected, MOCK_FILE };

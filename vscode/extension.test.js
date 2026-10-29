@@ -419,6 +419,19 @@ test('Init creates the config and .jstrace/ in the workspace folder, and opens t
   assert.equal(fake.messages.pop(), `info: Kept jstrace.config.json as it is in ${dir}. Edit it, then instrument.`);
 });
 
+test('Reinject injects again what was injected before the last Restore', async (t) => {
+  const dir = copyFixture(t, 'app');
+  const fake = activate(dir);
+  await fake.commands['jstrace.reinject']();
+  assert.deepEqual(fake.messages, ['info: jstrace: nothing was injected yet, so there is nothing to reinject.']);
+  await fake.commands['jstrace.inject']({ fsPath: path.join(dir, 'lib', 'math.js'), scheme: 'file' }, [{ fsPath: path.join(dir, 'lib', 'math.js'), scheme: 'file' }]);
+  await fake.commands['jstrace.restore']();
+  fake.messages.length = 0;
+  await fake.commands['jstrace.reinject']();
+  assert.deepEqual(fake.messages, ['info: Instrumented 1 file']);
+  assert.match(fs.readFileSync(path.join(dir, 'lib', 'math.js'), 'utf8'), /__jt\.load\(/);
+});
+
 test('the Search view finds calls in every log; a double-click shows one in the Calls view', async (t) => {
   const dir = copyFixture(t, 'app');
   const folder = path.join(dir, '.jstrace', 'logs');

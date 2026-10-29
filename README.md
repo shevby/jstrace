@@ -52,6 +52,7 @@ To use the CLI on its own, run `node <this repo>/cli/bin/jstrace.js`, or install
 2. Run your program as you always do, for example `node index.js`.
 3. Open the **jstrace** view in the activity bar. Each run is a log there, newest first; expand it to see its calls.
 4. When you're done, click **Restore Original Files** in the view's title bar.
+5. To trace the same files again (after editing your code, or the config), run **jstrace: Reinject** from the command palette. It injects again every folder and file you injected since the last time all was restored, picking up new files in those folders.
 
 ### On the command line
 
@@ -68,6 +69,7 @@ jstrace restore             # puts every original file back
 | `jstrace init` | Creates `jstrace.config.json` with the defaults (or checks the one there) and `.jstrace/`, so you can configure tracing before instrumenting anything. |
 | `jstrace instrument <path...>` | Injects tracing into the files under the paths. The originals go to `.jstrace/backup/`. Instrumenting again starts from the originals, so it picks up config changes. |
 | `jstrace restore [path...]` | Puts the originals back: all of them, or those under the paths. A file you edited since it was instrumented is left alone, and reported. Logs stay. |
+| `jstrace reinject` | Instruments again the paths instrumented since the last time all was restored (after that, until then), as `instrument` would. They're recorded in `.jstrace/injected.json`. Paths gone since are skipped. |
 | `jstrace mock [file]` | Creates a mock of what tracing uses from a template, and names it in the config. See [Mocking the runtime](#mocking-the-runtime). |
 | `jstrace help` | Shows the usage. |
 
