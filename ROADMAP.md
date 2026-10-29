@@ -36,3 +36,4 @@ All done; see [DONE.md](DONE.md).
 - [ ] 4.9 From code to calls: a CodeLens above each traced function in the editor ("called 12 times, last ← 120") from the selected log; clicking it reveals those calls in the tree. *(proposed)*
 - [ ] 4.11 Copy a value: context-menu commands copying a call's arguments or return value as JSON. *(proposed)*
 - [ ] 4.18 Find Calls at This Line inside a function's body: when nothing was called from the line, list the calls of the function around the cursor (found with VSCode's document symbols, since the logs have no function ends). *(proposed)*
+- [ ] 4.20 Logs from others are untrusted (since 4.19 they're meant to be passed around): escape Markdown in the hovers' names, paths and ids (`nodeTooltip`, `rowTooltip`; values are fenced already), so a crafted log can't load a remote image on hover; open a network (UNC) path from a log only inside a workspace folder, so a click can't make Windows authenticate to another host. *(proposed)*
