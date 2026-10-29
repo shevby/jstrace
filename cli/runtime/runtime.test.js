@@ -295,7 +295,7 @@ loop();`,
     '  ← undefined',
   ]);
   assert.deepEqual(stable(events.filter((event) => event.id === 7)), [
-    { type: 'call', id: 7, parent: 3, depth: 1, name: 'list.map().join', line: 2, column: 45, args: [','], external: true },
+    { type: 'call', id: 7, parent: 3, depth: 1, name: 'list.map().join', line: 2, column: 45, args: [','], external: true, code: "function run(list) { return list.map(double).join(','); }" },
   ]);
 });
 
@@ -335,7 +335,7 @@ test('paths in the project are logged relative to it, whatever case Windows give
   const [log] = readLogs(logs);
   const call = log.events.find((event) => event.type === 'call');
   assert.deepEqual(log.events.filter((event) => event.type === 'load').map((event) => event.file), ['main.js', 'lib/b.js']);
-  assert.deepEqual([call?.file, call?.site], ['lib/b.js', { file: 'main.js', line: 2 }]);
+  assert.deepEqual([call?.file, call?.site], ['lib/b.js', { file: 'main.js', line: 2, code: 'f();' }], 'with the code of its line');
   assert.equal(log.events[0].root, dir);
 });
 

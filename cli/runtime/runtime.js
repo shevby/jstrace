@@ -9,7 +9,7 @@
  * multi-line strings or templates.
  *
  * What instrumented code does with it:
- * - each file starts with `var __jtm = __jt.load(file, functions)`;
+ * - each file starts with `var __jtm = __jt.load(file, functions, calls, lines)`;
  * - each function starts with `const __jtc = __jtm.enter(index, [params])`, its body in
  *   `try { … } catch (e) { throw __jtc.throw(e) } finally { __jtc.exit() }`, and each
  *   `return x` as `return __jtc.ret(x)`;
@@ -72,9 +72,11 @@
 /**
  * The per-process runtime, `globalThis.__jt`.
  * @typedef {object} Runtime
- * @property {(file: string, functions: FunctionInfo[], calls?: FunctionInfo[]) => Module} load an
- *   instrumented file (its absolute path) starts running; `calls` are those going through the
- *   runtime, as callee names and positions
+ * @property {(file: string, functions: FunctionInfo[], calls?: FunctionInfo[], lines?: Record<string, string>) => Module} load
+ *   an instrumented file (its absolute path) starts running; `calls` are those going through
+ *   the runtime, as callee names and positions, and `lines` the code of the lines making
+ *   calls, by line number, which the calls made there log (`site.code`, or an external
+ *   call's `code`), so they can be found by the names passed to them
  */
 
 /**
@@ -195,6 +197,8 @@ function createRuntime(require, options) {
   let nextId = 1;
   /** @type {Entry[]} */
   const stack = [];
+  /** @type {Record<string, Record<string, string>>} the code of each loaded file's lines making calls, by file as logged */
+  const codes = Object.create(null);
   /** @type {Repeats} the calls made with nothing running */
   const topLevel = { made: new Map(), skipped: new Map(), unlogged: 0 };
   /** @type {Map<Repeats, EntryCall | null>} those with skipped calls not reported yet, and their call */
@@ -349,12 +353,26 @@ function createRuntime(require, options) {
    * natives, and Node's internals (`node:internal/…`, or `internal/…` before Node 16). So a
    * callback run by a function that isn't instrumented (`[].map`) was called from the line
    * that called that function, and one run by Node itself (a timer) has no site. A mock's
-   * `site` replaces it.
-   * @returns {{ file: string, line: number } | null}
+   * `site` replaces it. In an instrumented file, the site has the line's `code` too.
+   * @returns {{ file: string, line: number, code?: string } | null}
    */
   function siteOf() {
     const found = callSites ? site() : null;
-    return found ? { file: where(found.file), line: found.line } : null;
+    if (!found) return null;
+    const file = where(found.file);
+    const code = codeAt(file, found.line);
+    return code === undefined ? { file, line: found.line } : { file, line: found.line, code };
+  }
+
+  /**
+   * The code of a line making a call, as the instrumenter gave it.
+   * @param {string} file as logged
+   * @param {number} line
+   * @returns {string | undefined} none outside the lines of instrumented files making calls
+   */
+  function codeAt(file, line) {
+    const lines = codes[file];
+    return lines && Object.prototype.hasOwnProperty.call(lines, line) ? lines[line] : undefined;
   }
 
   /**
@@ -775,6 +793,7 @@ function createRuntime(require, options) {
       this.outcome = {};
       if (this.muted) return;
       const site = external ? null : siteOf();
+      const code = external ? codeAt(file, line) : undefined;
       const logged = snapshot((budget) => {
         if (external) return Array.prototype.map.call(args, (arg) => serialize(arg, 0, [], budget));
         /** @type {Record<string, unknown>} */
@@ -791,7 +810,7 @@ function createRuntime(require, options) {
           : show(logged);
       const { id, entry } = this;
       write(
-        { type: 'call', id, parent: entry.parent, depth: entry.depth, name, file, line, column, args: logged, ...(external ? { external } : site ? { site } : {}), time: time() },
+        { type: 'call', id, parent: entry.parent, depth: entry.depth, name, file, line, column, args: logged, ...(external ? (code === undefined ? { external } : { external, code }) : site ? { site } : {}), time: time() },
         entry.depth,
         `${name}(${shown}) #${id}  ${file}:${line}${external ? '  (not traced)' : site ? `  (from ${site.file}:${site.line})` : ''}`,
       );
@@ -912,8 +931,9 @@ function createRuntime(require, options) {
   }
 
   return {
-    load(absolute, functions, calls = []) {
+    load(absolute, functions, calls = [], lines = {}) {
       const file = where(absolute);
+      codes[file] = lines;
       const top = stack[stack.length - 1];
       const depth = top ? top.depth + 1 : 0;
       if (!top || !top.muted) {

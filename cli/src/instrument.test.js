@@ -160,6 +160,23 @@ list[0](); list[i](); (a || b)(); [1].map(f);`;
   assert.deepEqual(instrumentSource(source, { file: '/x.js' }).calls, []);
 });
 
+test('the lines making calls are given for the calls made there to log, trimmed and cut', () => {
+  const long = `f(${'x'.repeat(300)});`;
+  const source = `const total = sum(items, rate);\nlet a = 1;\npromise\n  .then(done);\nnew Shape(w);\ntag\`t\`;\r\n  ${long}  `;
+  const { lines, code } = instrumentSource(source, { file: '/x.js' });
+  assert.deepEqual(lines, {
+    1: 'const total = sum(items, rate);',
+    3: 'promise',
+    4: '.then(done);',
+    5: 'new Shape(w);',
+    6: 'tag`t`;',
+    7: `${long.slice(0, 199)}…`,
+  });
+  assert.ok(code.split('\n')[0].endsWith(`${JSON.stringify(lines)});const total = sum(items, rate);`), 'passed to load on the first line');
+  assert.deepEqual(instrumentSource(source, { file: '/x.js', options: { callSites: false } }).lines, {}, 'none without call sites');
+  assert.equal(Object.keys(instrumentSource(source, { file: '/x.js', options: { callSites: false }, externalCalls: { ignore: [] } }).lines).length, 6, 'unless external calls log theirs');
+});
+
 test('a shebang, directives, a module return and line endings stay as they are', async () => {
   const code = await same(`#!/usr/bin/env node\n'use strict'\n"another";\nfunction f() { 'use strict'\n return 1 }\nmodule.exports = f();\nreturn;\nmodule.exports = 2;`);
   assert.match(code, /^#!\/usr\/bin\/env node\n'use strict'\n"another";;var __jt=/);

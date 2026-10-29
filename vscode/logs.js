@@ -412,6 +412,18 @@ function nodeDescription(node) {
 }
 
 /**
+ * The line of code a call was made on, as the instrumenter gave it: `site.code`, or an
+ * external call's `code`. On one line, whatever the log says.
+ * @param {Record<string, any>} event
+ * @returns {string} `''` when unknown (a call site outside instrumented files, or an older log)
+ */
+function codeOf(event) {
+  if (event.type !== 'call') return '';
+  const code = event.external ? event.code : event.site?.code;
+  return typeof code === 'string' ? code.replace(/\s+/g, ' ').trim() : '';
+}
+
+/**
  * A fenced Markdown code block that the content can't close early.
  * @param {string} content
  * @param {string} [language]
@@ -445,6 +457,7 @@ function nodeTooltip(node, root) {
   const parts = [`**${title}** #${event.id}  \n${where}  \nat ${event.time} ms`];
   if (event.site) parts.push(`Called from ${relativePath(root, event.site.file)}:${event.site.line}`);
   if (event.external) parts.push(NOT_TRACED);
+  if (codeOf(event)) parts.push(`Called as:\n\n${codeBlock(codeOf(event), 'javascript')}`);
   if (event.type === 'resume') parts.push(`Part of call #${event.call} (click to show it)`);
   if (event.type === 'call') {
     const args = event.args ?? {};
@@ -556,7 +569,8 @@ function searchWords(query) {
 
 /**
  * What a search looks in for a node: its name with all its arguments (not cut, unlike its
- * label), how it ended, and where it is (`file:line`); a load's file.
+ * label), how it ended, where it is (`file:line`), and the line of code it was called on (so
+ * the names of the variables passed to it are found); a load's file.
  * @param {TraceNode} node
  * @param {string} root the project folder
  * @returns {string}
@@ -564,7 +578,7 @@ function searchWords(query) {
 function searchText(node, root) {
   const event = node.event;
   if (event.type === 'load') return `${processPrefix(event)}load ${relativePath(root, event.file)}`;
-  return `${processPrefix(event)}${event.name}(${argsText(event)})  ${nodeDescription(node)}  ${relativePath(root, event.file)}:${event.line}`;
+  return `${processPrefix(event)}${event.name}(${argsText(event)})  ${nodeDescription(node)}  ${relativePath(root, event.file)}:${event.line}  ${codeOf(event)}`;
 }
 
 /**
@@ -739,6 +753,7 @@ function nodeDetails(node, root) {
     const site = call.event.site;
     if (site) lines.push(`// called from ${relativePath(root, site.file)}:${site.line}  (${site.file})`);
     if (call.event.external) lines.push(`// ${NOT_TRACED}`);
+    if (codeOf(call.event)) lines.push(`// called as: ${codeOf(call.event)}`);
     lines.push(`// in: ${stackOf(call, root)}`);
     if (call.resumes.length > 0) lines.push(`// resumed ${call.resumes.length} ${call.resumes.length === 1 ? 'time' : 'times'}: ${call.resumes.map((part) => `#${part.event.id}`).join(', ')}`);
   }
