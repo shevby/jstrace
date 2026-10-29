@@ -907,6 +907,13 @@ function activate(context) {
       for (const folder of folders) await run(folder, ['restore']);
     }),
 
+    // injects again what was injected in each project since the last time all was restored
+    vscode.commands.registerCommand('jstrace.reinject', async () => {
+      const folders = projects().filter((folder) => fs.existsSync(path.join(folder.uri.fsPath, '.jstrace', 'injected.json')));
+      if (folders.length === 0) return void vscode.window.showInformationMessage('jstrace: nothing was injected yet, so there is nothing to reinject.');
+      for (const folder of folders) await run(folder, ['reinject']);
+    }),
+
     vscode.commands.registerCommand(
       'jstrace.inject',
       /**

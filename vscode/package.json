@@ -84,6 +84,11 @@
         "title": "jstrace: Inject"
       },
       {
+        "command": "jstrace.reinject",
+        "title": "Reinject",
+        "category": "jstrace"
+      },
+      {
         "command": "jstrace.createMock",
         "title": "Create Mock",
         "category": "jstrace"
