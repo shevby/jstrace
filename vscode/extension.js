@@ -776,6 +776,34 @@ function activate(context) {
     }),
 
     vscode.commands.registerCommand(
+      'jstrace.deleteLog',
+      /**
+       * Deletes a log (with its `.txt` and its process's name), or all the logs selected with it.
+       * @param {Item} [element] the item right-clicked; the selection, from a key
+       * @param {Item[]} [selected] all the items selected with it
+       */
+      async (element, selected) => {
+        const items = selected && selected.length > 0 ? selected : element ? [element] : view.selection;
+        const chosen = items.filter(/** @returns {item is LogItem} */ (item) => item.kind === 'log');
+        if (chosen.length === 0) return void vscode.window.showInformationMessage('jstrace: select a log in the Calls view to delete it.');
+        const yes = 'Delete';
+        const [first] = chosen;
+        const running = chosen.some((log) => log.running) ? `\n\n${chosen.length === 1 ? 'Its process is' : 'Some of their processes are'} still running: what they log from now on is lost.` : '';
+        const answer = await vscode.window.showWarningMessage(
+          chosen.length === 1 ? `Delete the jstrace log ${logs.logLabel(first.trace, first.file, first.root)}?` : `Delete ${chosen.length} jstrace logs?`,
+          { modal: true, detail: `${chosen.map((log) => log.file).join('\n')}${running}` },
+          yes,
+        );
+        if (answer !== yes) return;
+        for (const log of chosen) {
+          logs.deleteLog(log.file);
+          if (stepped.item?.log === log) clearStep();
+        }
+        provider.refresh();
+      },
+    ),
+
+    vscode.commands.registerCommand(
       'jstrace.nameProcess',
       /**
        * Names a log's process: its label shows it, and so do its calls once it's merged.

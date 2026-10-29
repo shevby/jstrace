@@ -63,6 +63,12 @@
         "icon": "$(clear-all)"
       },
       {
+        "command": "jstrace.deleteLog",
+        "title": "Delete Log",
+        "category": "jstrace",
+        "icon": "$(trash)"
+      },
+      {
         "command": "jstrace.restore",
         "title": "Restore Original Files",
         "category": "jstrace",
@@ -308,6 +314,11 @@
           "group": "2_process@2"
         },
         {
+          "command": "jstrace.deleteLog",
+          "when": "view == jstrace.calls && viewItem =~ /^(log|mergedLog)$/",
+          "group": "3_delete@1"
+        },
+        {
           "submenu": "jstrace.step",
           "when": "view =~ /^jstrace[.](calls|searchResults)$/ && viewItem =~ /^(log|mergedLog|call|callSite|external|resume|load|group)$/",
           "group": "0_go@9"
@@ -436,6 +447,12 @@
       }
     ],
     "keybindings": [
+      {
+        "command": "jstrace.deleteLog",
+        "key": "delete",
+        "mac": "cmd+backspace",
+        "when": "focusedView == jstrace.calls"
+      },
       {
         "command": "jstrace.stepInto",
         "key": "alt+down",
