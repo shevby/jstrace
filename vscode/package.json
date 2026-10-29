@@ -76,7 +76,8 @@
       },
       {
         "command": "jstrace.init",
-        "title": "jstrace: Init"
+        "title": "Init",
+        "category": "jstrace"
       },
       {
         "command": "jstrace.inject",
@@ -332,11 +333,6 @@
         }
       ],
       "explorer/context": [
-        {
-          "command": "jstrace.init",
-          "when": "resourceScheme == file && explorerResourceIsFolder",
-          "group": "7_modification@8"
-        },
         {
           "command": "jstrace.inject",
           "when": "resourceScheme == file",

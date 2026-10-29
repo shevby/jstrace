@@ -875,24 +875,18 @@ function activate(context) {
       },
     ),
 
-    vscode.commands.registerCommand(
-      'jstrace.init',
-      /**
-       * Runs `jstrace init` in a project (4.17), then opens its config, to edit before injecting.
-       * @param {vscode.Uri} [uri] a folder, from the Explorer's context menu: its workspace folder's project
-       */
-      async (uri) => {
-        const all = vscode.workspace.workspaceFolders ?? [];
-        const folder = uri ? vscode.workspace.getWorkspaceFolder(uri) : all.length === 1 ? all[0] : await vscode.window.showWorkspaceFolderPick({ placeHolder: 'The project to set up for jstrace' });
-        if (!folder) {
-          if (uri || all.length === 0) vscode.window.showErrorMessage(`jstrace: ${uri ? `${uri.fsPath} isn't` : 'open a folder:'} in a workspace folder.`);
-          return;
-        }
-        await run(folder, ['init']);
-        const config = path.join(folder.uri.fsPath, 'jstrace.config.json');
-        if (fs.existsSync(config)) await vscode.window.showTextDocument(vscode.Uri.file(config));
-      },
-    ),
+    // runs `jstrace init` in a project (4.17), then opens its config, to edit before injecting
+    vscode.commands.registerCommand('jstrace.init', async () => {
+      const all = vscode.workspace.workspaceFolders ?? [];
+      const folder = all.length === 1 ? all[0] : await vscode.window.showWorkspaceFolderPick({ placeHolder: 'The project to set up for jstrace' });
+      if (!folder) {
+        if (all.length === 0) vscode.window.showErrorMessage('jstrace: open a folder first.');
+        return;
+      }
+      await run(folder, ['init']);
+      const config = path.join(folder.uri.fsPath, 'jstrace.config.json');
+      if (fs.existsSync(config)) await vscode.window.showTextDocument(vscode.Uri.file(config));
+    }),
 
     vscode.commands.registerCommand('jstrace.createMock', async () => {
       const all = vscode.workspace.workspaceFolders ?? [];

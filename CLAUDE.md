@@ -68,7 +68,7 @@ It's a debugging aid, not a product. Keep it small. Slow tracing is fine, and sc
   ```
   `node_modules` is *not* excluded by default, since the user's own code can be there.
 - **CLI commands** (the user runs the instrumented program themselves, with no `jstrace run`):
-  - `jstrace init` (4.17): creates the config with the defaults (one there is only checked) and `.jstrace/` with its `.gitignore`, to configure before instrumenting. The extension's "jstrace: Init" (Explorer folders, palette, the empty Calls view's button) runs it in the workspace folder and opens the config.
+  - `jstrace init` (4.17): creates the config with the defaults (one there is only checked) and `.jstrace/` with its `.gitignore`, to configure before instrumenting. The extension's "jstrace: Init" (only the palette and the empty Calls view's button, no context menu) runs it in the workspace folder and opens the config.
   - `jstrace instrument <target...>`: for each matched file under the targets (a file named outright is taken regardless of include/exclude), back up the original to `.jstrace/backup/<path relative to the project>` and rewrite the file in place.
     - `.jstrace/backup/manifest.json` lists the instrumented files with a hash of what was written. This list exists only for restoring; the extension needs nothing but the logs.
     - A file instrumented already is restored first, so code is never injected twice.
