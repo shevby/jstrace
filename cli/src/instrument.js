@@ -29,6 +29,12 @@ const MARKER = 'var __jtm=__jt.load(';
 
 const FUNCTION_TYPES = new Set(['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression']);
 
+/** The nodes that call a function, whose lines can be call sites. */
+const CALL_TYPES = new Set(['CallExpression', 'NewExpression', 'TaggedTemplateExpression']);
+
+/** The longest line of code a call site gets, before it's cut. */
+const MAX_CODE = 200;
+
 /** What closes a function body: logs a throw and rethrows it, and ends the call. */
 const BODY_END = '}catch(__jte){throw __jtc.throw(__jte)}finally{__jtc.exit()}';
 
@@ -84,9 +90,11 @@ function literal(value) {
  * @param {{ ignore: string[] }} [context.externalCalls] when given, calls go through the
  *   runtime too, to log those of functions that aren't traced (4.13), but for callees named
  *   as `ignore`'s patterns say (`*` for anything)
- * @returns {{ code: string, functions: FunctionInfo[], calls: FunctionInfo[] }} the
- *   instrumented source, the metadata of its functions, and that of the calls going through
- *   the runtime (the callee's name and where it is, with no parameters)
+ * @returns {{ code: string, functions: FunctionInfo[], calls: FunctionInfo[], lines: Record<string, string> }}
+ *   the instrumented source, the metadata of its functions, that of the calls going through
+ *   the runtime (the callee's name and where it is, with no parameters), and the code of each
+ *   line making a call, by line number, for the calls made there to log (none with neither
+ *   `callSites` nor external calls)
  * @throws {SyntaxError} when the source can't be parsed as a script
  */
 function instrumentSource(source, { file, options = {}, runtime = createRuntime, externalCalls }) {
@@ -95,6 +103,8 @@ function instrumentSource(source, { file, options = {}, runtime = createRuntime,
   const functions = [];
   /** @type {FunctionInfo[]} */
   const calls = [];
+  /** @type {Set<number>} the lines making calls: where a call starts, and a method's name */
+  const callLines = new Set();
   const ignored = externalCalls && patterns(externalCalls.ignore);
   /** @type {Insertion[]} */
   const insertions = [];
@@ -111,6 +121,10 @@ function instrumentSource(source, { file, options = {}, runtime = createRuntime,
   walk(program, (node, parents) => {
     current = node;
     const depth = parents.length;
+    if (CALL_TYPES.has(node.type)) {
+      callLines.add(node.loc.start.line);
+      if (node.callee?.type === 'MemberExpression') callLines.add(node.callee.property.loc.start.line);
+    }
     if (FUNCTION_TYPES.has(node.type)) {
       const index = functions.length;
       functions.push(describe(node, parents, source));
@@ -156,16 +170,36 @@ function instrumentSource(source, { file, options = {}, runtime = createRuntime,
     }
   });
 
+  const lines = options.callSites !== false || ignored ? codeLines(source, callLines) : {};
+  const registered = [functions, ...(Object.keys(lines).length > 0 ? [calls, lines] : calls.length > 0 ? [calls] : [])];
   const factory = `return (${compact(runtime)})(require, options);`;
   const prelude =
     `;var __jt=globalThis.__jt||(globalThis.__jt=new Function("require","options",${literal(factory)})(require,${literal(options)}));` +
-    `${MARKER}${literal(file)},${literal(functions)}${calls.length > 0 ? `,${literal(calls)}` : ''});`;
+    `${MARKER}${literal(file)},${registered.map(literal).join(',')});`;
   current = null;
   insert(preludePosition(program, source), prelude, -1, false);
 
   const code = apply(source, insertions);
   check(source, code, file);
-  return { code, functions, calls };
+  return { code, functions, calls, lines };
+}
+
+/**
+ * The code of some lines, trimmed and cut, for the calls made there to log: so a search
+ * finds a call by the names of the variables passed to it.
+ * @param {string} source
+ * @param {Set<number>} numbers the lines, counting from 1
+ * @returns {Record<string, string>} by line number
+ */
+function codeLines(source, numbers) {
+  const all = source.split(/\r\n?|[\n\u2028\u2029]/); // the line breaks acorn counts
+  /** @type {Record<string, string>} */
+  const lines = {};
+  for (const number of [...numbers].sort((a, b) => a - b)) {
+    const code = (all[number - 1] ?? '').trim();
+    if (code) lines[number] = code.length > MAX_CODE ? `${code.slice(0, MAX_CODE - 1)}…` : code;
+  }
+  return lines;
 }
 
 /**

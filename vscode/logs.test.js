@@ -227,6 +227,22 @@ test('searchAt finds the calls made from a line, or of a function defined on it'
   if (process.platform === 'win32') assert.deepEqual(ids(file('a.js').toLowerCase(), 2), [2, 4], 'case is ignored on Windows');
 });
 
+test('the line of code a call was made on is searched, and shown in its hover and details', () => {
+  const trace = logs.parseLog([
+    { type: 'call', id: 1, parent: null, depth: 0, name: 'sum', file: file('a.js'), line: 1, column: 0, args: { list: [1] }, site: { file: file('b.js'), line: 3, code: 'const total = sum(items,\n rate);' }, time: 1 },
+    { type: 'call', id: 2, parent: null, depth: 0, name: 'JSON.parse', external: true, file: file('b.js'), line: 4, column: 5, args: ['{}'], code: 'JSON.parse(rawConfig)', time: 2 },
+    { type: 'call', id: 3, parent: null, depth: 0, name: 'old', file: file('a.js'), line: 2, column: 0, args: {}, site: { file: file('b.js'), line: 5 }, time: 3 },
+  ].map((event) => JSON.stringify(event)).join('\n'));
+  const ids = (/** @type {string} */ query) => logs.search(trace, query, ROOT).map((node) => node.event.id);
+  assert.deepEqual(ids('items'), [1], 'a variable passed to it');
+  assert.deepEqual(ids('sum total'), [1]);
+  assert.deepEqual(ids('rawconfig'), [2], 'an external call has its own');
+  const [sum, parse, old] = trace.roots;
+  assert.match(logs.nodeTooltip(sum, ROOT), /Called as:\n\n```javascript\nconst total = sum\(items, rate\);\n```/, 'on one line');
+  assert.match(logs.nodeDetails(parse, ROOT).text, /^\/\/ called as: JSON\.parse\(rawConfig\)$/m);
+  assert.doesNotMatch(logs.nodeTooltip(old, ROOT), /Called as/, 'none in an older log');
+});
+
 test('steps go through a run in the order it ran, into, over or out of calls, and back', () => {
   const trace = logs.parseLog(LOG);
   const node = (/** @type {number} */ id) => /** @type {import('./logs').TraceNode} */ (trace.nodes.get(id));

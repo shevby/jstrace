@@ -87,7 +87,7 @@ Each log is one process, labeled by its script and arguments, with its start tim
 - **Errors**: a call that threw has a red icon.
 - **Right-click** a call for **Expand All Below**, or a log for **Open as Text**, **Merge Logs…**, **Name Process…** and **Delete Log** (also `Delete`, or `Cmd+Backspace` on macOS, on the logs selected; it asks first).
 
-**Search** (the magnifier button) finds calls in every log by function name, arguments, result or `file:line`. Every word must match, ignoring case. Results appear in the **Search** view. A click goes to the code, and a double-click shows the call in the Calls view.
+**Search** (the magnifier button) finds calls in every log by function name, arguments, result, `file:line`, or the line of code that made the call, so `taxRate` finds `sum(items, taxRate)` by the variable's name. That line is also in a call's hover and details, as "called as". Only calls made from instrumented files have it, and only in logs written since Inject started recording it. Every word must match, ignoring case. Results appear in the **Search** view. A click goes to the code, and a double-click shows the call in the Calls view.
 
 **jstrace: Find Calls at This Line** (the editor's context menu, or the command palette) lists in the Search view the calls at the cursor's line: those made from it, and those of a function defined on it.
 
