@@ -37,15 +37,17 @@ function cliScript(extensionDir) {
  * act as plain Node by `ELECTRON_RUN_AS_NODE`.
  * @param {string} extensionDir the extension's folder, where `cliScript` looks
  * @param {string[]} args the CLI's arguments (`instrument <path...>`, `restore`)
- * @param {string} cwd the folder it runs in, which decides the project
+ * @param {string} cwd the folder it runs in, which is the project: the extension shows a
+ *   workspace folder's logs, so a `.jstrace/` above it must not take over
  * @returns {Promise<CliResult>}
  */
 function runCli(extensionDir, args, cwd) {
   const script = cliScript(extensionDir);
   if (!script) return Promise.resolve({ code: 1, stdout: '', stderr: `jstrace's CLI isn't in the extension (${extensionDir}): package it again with npm run package` });
-  const options = { cwd, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true, encoding: /** @type {const} */ ('utf8') };
+  // no limit on its output: Node kills a process that goes past it, in the middle of its work
+  const options = { cwd, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true, encoding: /** @type {const} */ ('utf8'), maxBuffer: Infinity };
   return new Promise((resolve) => {
-    execFile(process.execPath, [script, ...args], options, (error, stdout, stderr) => {
+    execFile(process.execPath, [script, '--project', cwd, ...args], options, (error, stdout, stderr) => {
       const code = error ? (typeof error.code === 'number' ? error.code : 1) : 0;
       const message = error && typeof error.code !== 'number' ? `Couldn't run ${script}: ${error.message}` : '';
       resolve({ code, stdout, stderr: [stderr, message].filter(Boolean).join('\n') });

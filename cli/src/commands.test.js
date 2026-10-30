@@ -2,7 +2,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { main } = require('./cli');
@@ -93,6 +93,36 @@ test('targets add up, and restore can take some of them', (t) => {
   assert.deepEqual(run(dir, 'restore', 'node_modules', 'lib').out, ['Restored 2 files']);
   assert.deepEqual(Object.keys(readManifest(projectAt(dir)).files), ['child.js']);
   assert.ok(!fs.existsSync(path.join(dir, '.jstrace/backup/node_modules')));
+});
+
+test('what an instrument killed midway rewrote can still be restored', (t) => {
+  const dir = copyFixture(t, 'app');
+  const project = projectAt(dir);
+  const killed = `require(${JSON.stringify(require.resolve('./cli'))}).main(['instrument', '.'], { out() {}, err() { process.exit(9); } }, ${JSON.stringify(dir)});`;
+  assert.equal(spawnSync(process.execPath, ['-e', killed]).status, 9, 'at the first file it skips');
+  assert.ok(!fs.existsSync(project.manifest), 'it never got to write the manifest');
+  const rewritten = Object.keys(readManifest(project).files);
+  assert.ok(rewritten.length > 0);
+  for (const rel of rewritten) assert.ok(isInstrumented(file(dir, rel).current), rel);
+
+  fs.appendFileSync(project.journal, '["cut sh'); // a line the kill cut short
+  assert.equal(run(dir, 'restore').code, 0);
+  for (const rel of rewritten) assert.equal(file(dir, rel).current, file(dir, rel).original, rel);
+  assert.ok(!fs.existsSync(project.backup), 'nothing left');
+
+  assert.equal(run(dir, 'instrument', 'index.js').code, 0);
+  assert.ok(fs.existsSync(project.manifest));
+  assert.ok(!fs.existsSync(project.journal), 'a run that ended needs none');
+});
+
+test('--project names the project, whatever is above the folder', (t) => {
+  const dir = copyFixture(t, 'app');
+  run(dir, 'init');
+  const folder = path.join(dir, 'lib');
+  assert.equal(run(folder, '--project', '.', 'instrument', 'math.js').code, 0);
+  assert.deepEqual(Object.keys(readManifest(projectAt(folder)).files), ['math.js']);
+  assert.ok(!fs.existsSync(projectAt(dir).manifest), 'not the one above');
+  assert.equal(run(dir, '--project').code, 2);
 });
 
 test('reinject skips a recorded path outside the project, and goes on with the others', (t) => {
