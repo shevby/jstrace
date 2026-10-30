@@ -73,8 +73,8 @@ test('labels, descriptions and hovers read like the .txt tree', () => {
   assert.ok(label.endsWith('…)'));
 
   const hover = logs.nodeTooltip(divide, ROOT);
-  assert.match(hover, /\*\*divide\(\)\*\* #3/);
-  assert.match(hover, /src\/app\.js:9/);
+  assert.match(hover, /\*\*divide\\\(\\\)\*\* #3/);
+  assert.match(hover, /src\\\/app\\\.js\\:9/);
   assert.match(hover, /"a": 1,\n {2}"b": 0/);
   assert.match(hover, /Threw:/);
   assert.match(logs.nodeTooltip(resume, ROOT), /Part of call #4/);
@@ -125,7 +125,7 @@ test('rows group the calls of a function, with those not logged', () => {
   assert.deepEqual(describe(logs.rows(loop.children, loop.skips, 0)), ['step(id: 2)', 'other(id: 3)', 'step(id: 4)', 'step(id: 5)', '… step() ×7 not logged', '… gone() ×1 not logged'], '0: no groups');
   const [group, , skip] = logs.rows(loop.children, loop.skips, 3);
   assert.match(logs.rowTooltip(group, ROOT), /called 10 times here[^]*3 logged, 7 not: past `maxRepeat`/);
-  assert.match(logs.rowTooltip(skip, ROOT), /\*\*gone\(\)\*\* called 1 more time here, not logged/);
+  assert.match(logs.rowTooltip(skip, ROOT), /\*\*gone\\\(\\\)\*\* called 1 more time here, not logged/);
   const resumes = { type: 'skip', parent: 1, name: 'loop', file: file('a.js'), line: 1, column: 0, count: 4, resumes: true };
   assert.equal(logs.skipLabel(resumes), '… loop() resumed ×4 not logged');
   assert.match(logs.rowTooltip({ kind: 'skip', event: resumes, key: '' }, ROOT), /resumed 4 more times here, not logged/);
@@ -151,6 +151,62 @@ test('timeRows lists nodes and skips in the order they happened, in pages past t
   const [first, second] = [trace.timeline[0].event, trace.timeline[3].event];
   assert.equal(logs.pageDescription(trace, pages[0]), `${logs.clockTime(trace, first)} – ${logs.clockTime(trace, trace.timeline[2].event)}`);
   assert.equal(logs.pageDescription(trace, pages[1]), `${logs.clockTime(trace, second)} – ${logs.clockTime(trace, second)}`);
+});
+
+test('rows by time stay unique when skips look alike: forged, or merged from one pid', () => {
+  const skip = { type: 'skip', parent: null, name: 'f', file: 'a.js', line: 1, column: 0, count: 2, time: 5 };
+  const start = { type: 'start', pid: 1, argv: ['node', 'a.js'], started: '2026-01-01T00:00:00.000Z', time: 0 };
+  const text = (/** @type {object[]} */ ...events) => events.map((event) => `${JSON.stringify(event)}\n`).join('');
+  const forged = logs.parseLog(text(start, skip, skip));
+  const { jsonl } = logs.mergeLogs([{ file: 'x.jsonl', text: text(start, skip), name: 'a' }, { file: 'y.jsonl', text: text(start, skip), name: 'b' }], ROOT);
+  for (const trace of [forged, logs.parseLog(jsonl)]) {
+    assert.equal(new Set(trace.timeline.map((row) => row.key)).size, 2);
+  }
+});
+
+test('a hover shows what a log says as text, never as Markdown (4.20)', () => {
+  const evil = '![x](https://evil.example/x.png)<img src=x>\n\n# [a](command:b) **c** `d` &#33;';
+  const event = (/** @type {object} */ fields) => ({ parent: null, depth: 0, name: evil, file: evil, line: evil, column: 0, time: evil, ...fields });
+  const trace = logs.parseLog([
+    event({ type: 'call', id: 1, args: {}, site: { file: evil, line: evil } }),
+    event({ type: 'resume', id: 2, call: evil }),
+    event({ type: 'skip', count: evil }),
+  ].map((line) => JSON.stringify(line)).join('\n'));
+  const [call, resume] = [...trace.nodes.values()];
+  const group = { kind: /** @type {const} */ ('group'), event: call.event, key: '', nodes: [call], skip: trace.skips[0] };
+  const hovers = [
+    logs.nodeTooltip(call, ''),
+    logs.nodeTooltip(resume, ''),
+    logs.rowTooltip({ kind: 'skip', event: trace.skips[0], key: '' }, ''),
+    logs.rowTooltip(group, ''),
+    logs.escapeMarkdown(logs.stackOf(call, '')),
+  ];
+  for (const hover of hovers) {
+    assert.ok(hover.includes(String.raw`\!\[x\]\(https\:\/\/evil\.example\/x\.png\)`), hover);
+    assert.ok(hover.includes(String.raw`\*\*c\*\* \`d\` \&\#33\;`), hover);
+    assert.doesNotMatch(hover, /(?<!\\)(?:!\[|\]\(|<|&)|\n\n# /, hover);
+  }
+});
+
+test('a path from a log is opened when local, and a network one only inside a workspace folder (4.20)', () => {
+  const folders = ['//host/share/project'];
+  for (const file of ['C:\\work\\a.js', 'd:/work/a.js', '/home/me/a.js']) assert.ok(logs.mayOpen(file, []), file);
+  assert.ok(logs.mayOpen('//host/share/project/lib/a.js', folders), 'a project on a share');
+  for (const file of [
+    '\\\\evil\\share\\a.js',
+    '//evil/share/a.js',
+    '/\\evil\\share\\a.js',
+    '\\/evil/share/a.js',
+    '\\\\?\\UNC\\evil\\share\\a.js',
+    '\\\\.\\UNC\\evil\\share\\a.js',
+    '\\??\\UNC\\evil\\share\\a.js',
+    '//host/share/project/../other/a.js',
+    '//host/share/projectile/a.js',
+    5,
+    undefined,
+  ]) {
+    assert.equal(logs.mayOpen(file, folders), false, String(file));
+  }
 });
 
 test('details show where and when a call ran, its arguments and how it ended', () => {

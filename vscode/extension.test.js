@@ -262,7 +262,7 @@ test('the extension injects, shows the call trees, jumps to code, restores and c
   assert.deepEqual(opened(), at('index.js', 25, 36), 'Go to Call Site: there too, the editor taking the focus to show its cursor');
   await fake.commands['jstrace.goToFunction'](factorial);
   assert.deepEqual(opened(), at(path.join('lib', 'math.js'), 6, 0), 'the button goes to the function');
-  assert.match(provider.resolveTreeItem(item, factorial).tooltip.value, /Called from index\.js:26/);
+  assert.match(provider.resolveTreeItem(item, factorial).tooltip.value, /Called from index\\\.js\\:26/);
 
   await fake.commands['jstrace.showDetails'](factorial);
   const shown = fake.opened.pop();
@@ -451,7 +451,7 @@ test('a log can be listed by time, at one level, with its timestamps shown or hi
   assert.equal(rows[0], main, 'the same items, so a reveal finds them');
   const send = rows[1];
   assert.equal(provider.getParent(send), log);
-  assert.match(provider.resolveTreeItem(provider.getTreeItem(send), send).tooltip.value, /^In main\(\) #1\n/);
+  assert.match(provider.resolveTreeItem(provider.getTreeItem(send), send).tooltip.value, /^In main\\\(\\\) \\#1\n/);
   assert.equal(provider.getTreeItem(rows[3]).command.command, 'jstrace.showStep', 'a resume stays where it was clicked');
   await fake.commands['jstrace.showStep'](send);
   assert.equal(fake.lenses.provider.provideCodeLenses(fake.last.document)[0].command.title, 'send()', 'no timestamp in the step hint');
@@ -468,6 +468,33 @@ test('a log can be listed by time, at one level, with its timestamps shown or hi
   assert.deepEqual(provider.getChildren(log).slice(0, 1), [main]);
   assert.equal(provider.getParent(send).kind, 'group', 'nested and grouped again');
   assert.equal(provider.getTreeItem(main).collapsibleState, 1);
+});
+
+test('a network path named by a log is not opened, by a click or by going to it', async (t) => {
+  const dir = copyFixture(t, 'app');
+  const folder = path.join(dir, '.jstrace', 'logs');
+  fs.mkdirSync(folder, { recursive: true });
+  const fake = activate(dir);
+  const provider = fake.provider();
+  const evil = '\\\\evil.example\\share\\a.js';
+  const lines = [
+    { type: 'start', pid: 1, argv: ['node', 'a.js'], cwd: dir, started: '2026-01-01T00:00:00.000Z', time: 0 },
+    { type: 'call', id: 1, parent: null, depth: 0, name: 'f', file: evil, line: 1, column: 0, args: {}, site: { file: evil, line: 2 }, time: 1 },
+  ];
+  fs.writeFileSync(path.join(folder, '2026-01-01T00-00-00.000Z-1.jsonl'), lines.map((line) => `${JSON.stringify(line)}\n`).join(''));
+  const [log] = provider.getChildren();
+  const [call] = provider.getChildren(log);
+  /** @type {any[]} */
+  const asked = [];
+  const open = fake.vscode.workspace.openTextDocument;
+  fake.vscode.workspace.openTextDocument = async (/** @type {any} */ uri) => (asked.push(uri), open(uri));
+
+  await fake.commands['jstrace.showStep'](call);
+  await fake.commands['jstrace.goToFunction'](call);
+  await fake.commands['jstrace.goToSite'](call);
+  assert.deepEqual(asked, [], 'never asked to read it');
+  const said = `error: jstrace: not opening ${evil}: a log named a network path outside the workspace.`;
+  assert.deepEqual(fake.messages, [said, said, said]);
 });
 
 test('a log too long for one list is split into pages, and a call in one can be revealed', async (t) => {
@@ -553,7 +580,7 @@ test('the Search view finds calls in every log; a double-click shows one in the 
   const [add] = search.getChildren(results);
   const item = search.getTreeItem(add);
   assert.deepEqual([item.label, item.description, item.contextValue], [{ label: 'add(n: 3)', highlights: [[0, 3], [7, 8]] }, '← 6  index.js:6', 'callSite']);
-  assert.match(search.resolveTreeItem(item, add).tooltip.value, /^In main\(\) #1\n/);
+  assert.match(search.resolveTreeItem(item, add).tooltip.value, /^In main\\\(\\\) \\#1\n/);
 
   const [other] = search.getChildren(search.getChildren()[0]);
   await fake.commands[item.command.command](...item.command.arguments);

@@ -512,7 +512,7 @@
         "command": "jstrace.deleteLog",
         "key": "delete",
         "mac": "cmd+backspace",
-        "when": "focusedView == jstrace.calls"
+        "when": "focusedView == jstrace.calls && !inputFocus"
       },
       {
         "command": "jstrace.stepInto",

@@ -290,6 +290,7 @@ Files in the project are logged relative to it (`lib/math.js`), so you can copy 
 - A log that ended shows as ended. One whose process was killed, or is still running, may show a spinning icon for up to 30 minutes, if a process there happens to have its pid.
 - Logs from different machines merge, but in the order their clocks give.
 - Logs written before this change hold absolute paths, which work only where they were written.
+- A log can be crafted, so treat one from someone else with care. Hovers show its text as plain text, and a network path (`\\host\share\…`) in it is opened only inside a workspace folder, since just opening one makes Windows authenticate to that host.
 
 ### What the logs hold
 

@@ -48,7 +48,9 @@ const NOT_TRACED = "Not traced (a built-in, or in a file that isn't instrumented
  * @typedef {object} Row
  * @property {'node' | 'group' | 'skip' | 'page'} kind
  * @property {Record<string, any>} event the node's; a group's or a page's first; a skip's `skip` event
- * @property {string} key what a group's nodes share, a skip's function, and where a page starts
+ * @property {string} key what a group's nodes share, and a skip's function; by time, a skip's
+ *   or a page's place in the list, since nothing else in a log is sure to be unique
+
  * @property {TraceNode} [node] a node's
  * @property {TraceNode[]} [nodes] a group's, in order
  * @property {Record<string, any>} [skip] a group's `skip` event, when calls of it weren't logged
@@ -58,6 +60,13 @@ const NOT_TRACED = "Not traced (a built-in, or in a file that isn't instrumented
 
 /** What an absolute path starts with, on Windows or elsewhere, whichever machine wrote the log. */
 const ABSOLUTE = /^(?:[A-Za-z]:[\\/]|[\\/])/;
+
+/**
+ * What a path known to be on this machine starts with: a drive, or a single `/`. Anything
+ * else may name another host, in more spellings than are worth listing (`\\host`, `//host`,
+ * `/\host`, `\\?\UNC\host`, `\??\UNC\host`).
+ */
+const LOCAL = /^(?:[A-Za-z]:[\\/]|\/(?![\\/]))/;
 
 /**
  * Builds the call trees of a log. A line that isn't JSON (one being written, or cut short by
@@ -125,7 +134,7 @@ function appendLog(trace, text) {
     } else if (event.type === 'skip') {
       const node = event.parent === null ? undefined : trace.nodes.get(event.parent);
       (node ? node.skips : trace.skips).push(event);
-      trace.timeline.push({ kind: 'skip', event, key: `${event.parent}:${groupKey(event)}` });
+      trace.timeline.push({ kind: 'skip', event, key: String(trace.timeline.length) });
     }
   }
 }
@@ -352,6 +361,34 @@ function relativePath(root, file) {
 }
 
 /**
+ * Whether a path from a log may be opened (4.20): logs can come from others, and just opening
+ * a network path makes Windows authenticate to that host, so one is opened only inside a
+ * workspace folder (a project on a share).
+ * @param {unknown} file
+ * @param {string[]} folders the workspace folders
+ * @returns {boolean}
+ */
+function mayOpen(file, folders) {
+  if (typeof file !== 'string') return false;
+  if (LOCAL.test(file)) return true;
+  return folders.some((folder) => {
+    const rel = path.relative(folder, file);
+    return !rel.startsWith('..') && !path.isAbsolute(rel);
+  });
+}
+
+/**
+ * Text from a log as literal Markdown, on one line (4.20): logs can come from others, so a
+ * hover mustn't render what they say (an image would be loaded, telling its host you looked).
+ * Every ASCII punctuation character can be escaped, so all are.
+ * @param {unknown} text
+ * @returns {string}
+ */
+function escapeMarkdown(text) {
+  return String(text).replace(/\s+/g, ' ').replace(/[!-/:-@[-`{-~]/g, '\\$&');
+}
+
+/**
  * A value as one line of JSON, the way the `.txt` tree shows it.
  * @param {any} value a value from an event (`undefined` when the event left it out)
  * @returns {string}
@@ -481,7 +518,8 @@ function prettyValue(value) {
 }
 
 /**
- * A node's hover, in Markdown: where it is, its arguments, and how it ended.
+ * A node's hover, in Markdown: where it is, its arguments, and how it ended. All that comes
+ * from the log is either escaped or in a code block.
  * @param {TraceNode} node
  * @param {string} root the project folder
  * @returns {string}
@@ -490,11 +528,11 @@ function nodeTooltip(node, root) {
   const event = node.event;
   const where = event.type === 'load' ? relativePath(root, event.file) : `${relativePath(root, event.file)}:${event.line}`;
   const title = event.type === 'load' ? 'load' : event.type === 'resume' ? `↻ ${event.name}() resumed` : `${event.name}()`;
-  const parts = [`**${title}** #${event.id}  \n${where}  \nat ${event.time} ms`];
-  if (event.site) parts.push(`Called from ${relativePath(root, event.site.file)}:${event.site.line}`);
+  const parts = [`**${escapeMarkdown(title)}** #${escapeMarkdown(event.id)}  \n${escapeMarkdown(where)}  \nat ${escapeMarkdown(event.time)} ms`];
+  if (event.site) parts.push(`Called from ${escapeMarkdown(`${relativePath(root, event.site.file)}:${event.site.line}`)}`);
   if (event.external) parts.push(NOT_TRACED);
   if (codeOf(event)) parts.push(`Called as:\n\n${codeBlock(codeOf(event), 'javascript')}`);
-  if (event.type === 'resume') parts.push(`Part of call #${event.call} (click to show it)`);
+  if (event.type === 'resume') parts.push(`Part of call #${escapeMarkdown(event.call)} (click to show it)`);
   if (event.type === 'call') {
     const args = event.args ?? {};
     if (Object.keys(args).length > 0) parts.push(`Arguments:\n\n${codeBlock(prettyValue(args))}`);
@@ -559,24 +597,25 @@ function pageDescription(trace, row) {
 }
 
 /**
- * A group's or a skip's hover, in Markdown.
+ * A group's or a skip's hover, in Markdown, with all that comes from the log escaped.
  * @param {Row} row
  * @param {string} root the project folder
  * @returns {string}
  */
 function rowTooltip(row, root) {
   const event = row.event;
-  const where = `${relativePath(root, event.file)}:${event.line}`;
+  const where = escapeMarkdown(`${relativePath(root, event.file)}:${event.line}`);
+  const name = escapeMarkdown(`${event.name}()`);
   const why = 'past `maxRepeat` in `jstrace.config.json` (0 logs every call)';
   if (row.kind === 'skip') {
     const what = event.resumes ? 'resumed' : 'called';
     const note = event.resumes ? ' What ran in those parts is neither logged nor counted.' : '';
-    return `**${event.name}()** ${what} ${event.count} more ${event.count === 1 ? 'time' : 'times'} here, not logged: ${why}.${note}  \n${where}`;
+    return `**${name}** ${what} ${escapeMarkdown(event.count)} more ${event.count === 1 ? 'time' : 'times'} here, not logged: ${why}.${note}  \n${where}`;
   }
   const logged = row.nodes?.length ?? 0;
-  if (event.type === 'resume') return `**${event.name}()** resumed ${logged} times here  \n${where}`;
-  const lines = [`**${event.name}()** called ${logged + (row.skip?.count ?? 0)} times here  \n${where}`];
-  if (row.skip) lines.push(`${logged} logged, ${row.skip.count} not: ${why}`);
+  if (event.type === 'resume') return `**${name}** resumed ${logged} times here  \n${where}`;
+  const lines = [`**${name}** called ${escapeMarkdown(logged + (row.skip?.count ?? 0))} times here  \n${where}`];
+  if (row.skip) lines.push(`${logged} logged, ${escapeMarkdown(row.skip.count)} not: ${why}`);
   return lines.join('\n\n');
 }
 
@@ -1032,6 +1071,8 @@ module.exports = {
   deleteLog,
   textOf,
   relativePath,
+  mayOpen,
+  escapeMarkdown,
   formatValue,
   logLabel,
   logDescription,
