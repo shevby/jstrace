@@ -89,6 +89,8 @@ Each log is one process, labeled by its script and arguments, with its start tim
 - **Errors**: a call that threw has a red icon.
 - **Right-click** a call for **Expand All Below**, or a log for **Open as Text**, **Merge Logs…**, **Name Process…** and **Delete Log** (also `Delete`, or `Cmd+Backspace` on macOS, on the logs selected; it asks first).
 
+**Show by Time** (the history button in the view's title bar) lists every record of a log at one level, in the order it happened, instead of as call trees: its calls, resumes and loads, and the calls not logged. Each call's row still shows what it returned or threw. It's made for following how programs talk, so it's most useful on a [merged log](#merging-processes). The hover says what each call ran in. Clicking a row shows it as in the tree, except that a resume stays selected, and stepping goes on from it. The clock button next to it shows or hides the timestamps (`10:15:03.123`, by your computer's clock). Both choices are kept for the workspace. A log of more than 2000 records is split into pages of 2000, each labeled with when it starts and ends. The list icon button goes back to the call trees.
+
 **Search** (the magnifier button) finds calls in every log by function name, arguments, result, `file:line`, or the line of code that made the call, so `taxRate` finds `sum(items, taxRate)` by the variable's name. That line is also in a call's hover and details, as "called as". Only calls made from instrumented files have it, and only in logs written since Inject started recording it. Every word must match, ignoring case. Results appear in the **Search** view. A click goes to the code, and a double-click shows the call in the Calls view.
 
 **jstrace: Find Calls at This Line** (the editor's context menu, or the command palette) lists in the Search view the calls at the cursor's line: those made from it, and those of a function defined on it.
@@ -173,7 +175,7 @@ worker 3324 › handle(job: {"id":1,"op":"factorial","n":5})
 chat 25676  › ↻ main() resumed
 ```
 
-Stepping follows the merged order, from one process into the other. The merged `.txt` has each line after its process's name and pid. To name a process before merging, right-click its log and choose **Name Process…**. The names are kept in `.jstrace/logs/names.json`, and **Clear Logs** removes them with the logs.
+**Show by Time** in the Calls view's title bar drops the call trees and lists the whole conversation at one level, with a timestamp on each row. Stepping follows the merged order, from one process into the other. The merged `.txt` has each line after its process's name and pid. To name a process before merging, right-click its log and choose **Name Process…**. The names are kept in `.jstrace/logs/names.json`, and **Clear Logs** removes them with the logs.
 
 ## Mocking the runtime
 

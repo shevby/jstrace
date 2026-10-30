@@ -57,6 +57,30 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "jstrace.showByTime",
+        "title": "Show by Time",
+        "category": "jstrace",
+        "icon": "$(history)"
+      },
+      {
+        "command": "jstrace.showAsTree",
+        "title": "Show as Call Trees",
+        "category": "jstrace",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "jstrace.showTimes",
+        "title": "Show Timestamps",
+        "category": "jstrace",
+        "icon": "$(clock)"
+      },
+      {
+        "command": "jstrace.hideTimes",
+        "title": "Hide Timestamps",
+        "category": "jstrace",
+        "icon": "$(eye-closed)"
+      },
+      {
         "command": "jstrace.clearLogs",
         "title": "Clear Logs",
         "category": "jstrace",
@@ -223,24 +247,44 @@
           "group": "navigation@0"
         },
         {
-          "command": "jstrace.mergeLogs",
-          "when": "view == jstrace.calls",
+          "command": "jstrace.showByTime",
+          "when": "view == jstrace.calls && !jstrace.byTime",
           "group": "navigation@1"
         },
         {
-          "command": "jstrace.refresh",
-          "when": "view == jstrace.calls",
+          "command": "jstrace.showAsTree",
+          "when": "view == jstrace.calls && jstrace.byTime",
+          "group": "navigation@1"
+        },
+        {
+          "command": "jstrace.showTimes",
+          "when": "view == jstrace.calls && jstrace.byTime && !jstrace.showTimes",
           "group": "navigation@2"
         },
         {
-          "command": "jstrace.clearLogs",
+          "command": "jstrace.hideTimes",
+          "when": "view == jstrace.calls && jstrace.byTime && jstrace.showTimes",
+          "group": "navigation@2"
+        },
+        {
+          "command": "jstrace.mergeLogs",
           "when": "view == jstrace.calls",
           "group": "navigation@3"
         },
         {
-          "command": "jstrace.restore",
+          "command": "jstrace.refresh",
           "when": "view == jstrace.calls",
           "group": "navigation@4"
+        },
+        {
+          "command": "jstrace.clearLogs",
+          "when": "view == jstrace.calls",
+          "group": "navigation@5"
+        },
+        {
+          "command": "jstrace.restore",
+          "when": "view == jstrace.calls",
+          "group": "navigation@6"
         },
         {
           "command": "jstrace.search",
@@ -348,6 +392,22 @@
         {
           "command": "jstrace.searchLine",
           "when": "editorIsOpen && resourceScheme == file"
+        },
+        {
+          "command": "jstrace.showByTime",
+          "when": "!jstrace.byTime"
+        },
+        {
+          "command": "jstrace.showAsTree",
+          "when": "jstrace.byTime"
+        },
+        {
+          "command": "jstrace.showTimes",
+          "when": "jstrace.byTime && !jstrace.showTimes"
+        },
+        {
+          "command": "jstrace.hideTimes",
+          "when": "jstrace.byTime && jstrace.showTimes"
         },
         {
           "command": "jstrace.openText",

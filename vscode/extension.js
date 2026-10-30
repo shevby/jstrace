@@ -46,10 +46,10 @@ const { runCli } = require('./cli');
  */
 
 /**
- * A group of the calls of a function (or the resumes of a call) under a node, or calls
- * not logged (see `rows` in `logs.js`).
+ * A group of the calls of a function (or the resumes of a call) under a node, calls not
+ * logged (see `rows` in `logs.js`), or a page of a long log listed by time (`timeRows`).
  * @typedef {object} RowItem
- * @property {'group' | 'skip'} kind
+ * @property {'group' | 'skip' | 'page'} kind
  * @property {string} id
  * @property {LogItem} log
  * @property {import('./logs').Row} row
@@ -59,6 +59,9 @@ const { runCli } = require('./cli');
 
 /** The colors of the processes' icons in a merged log, in the order they're listed (not red: that's for a throw). */
 const PROCESS_COLORS = ['charts.blue', 'charts.orange', 'charts.green', 'charts.purple', 'charts.yellow'];
+
+/** How many rows a log listed by time shows in one list; past that it's split into pages of this size, as big arrays are in a debugger's Variables view. */
+const PAGE_SIZE = 2000;
 
 /**
  * Whether a log is a merged one (4.14).
@@ -117,7 +120,8 @@ function logFolder(folder) {
 }
 
 /**
- * The tree view's data: projects (with more than one) → logs, newest first → call trees.
+ * The tree view's data: projects (with more than one) → logs, newest first → call trees, or
+ * every record of a log at one level, in the order they happened (`byTime`, 4.24).
  * Logs are read as they grow: from where the last read stopped, when listed or expanded and
  * every second (`tick`), so a running program's calls show up as it makes them.
  * @implements {vscode.TreeDataProvider<Item>}
@@ -132,6 +136,10 @@ class CallsProvider {
     this.projectItems = new Map();
     /** @type {Map<string, LogItem>} by `.jsonl` file */
     this.logItems = new Map();
+    /** @type {boolean} whether logs list their records by time, rather than as call trees */
+    this.byTime = false;
+    /** @type {boolean} whether records listed by time show when they happened */
+    this.showTimes = true;
   }
 
   /**
@@ -157,7 +165,8 @@ class CallsProvider {
     const log = element.kind === 'log' ? element : element.log;
     /** @type {import('./logs').Row[]} */
     let rows;
-    if (element.kind === 'log') rows = logs.rows(element.trace.roots, element.trace.skips, groupMin());
+    if (this.byTime) rows = element.kind === 'log' ? logs.timeRows(element.trace, PAGE_SIZE) : element.kind === 'page' ? element.row.rows ?? [] : [];
+    else if (element.kind === 'log') rows = logs.rows(element.trace.roots, element.trace.skips, groupMin());
     else if (element.kind === 'node') rows = logs.rows(element.node.children, element.node.skips, groupMin());
     else if (element.kind === 'group') {
       const { nodes = [], skip, key } = element.row;
@@ -175,13 +184,20 @@ class CallsProvider {
   }
 
   /**
-   * The parent of a node is its group, when it's in one, else the node it ran in.
+   * The parent of a node is its group, when it's in one, else the node it ran in. Listed by
+   * time, it's its page, when the log is split into them, else its log.
    * @param {Item} element
    * @returns {Item | undefined}
    */
   getParent(element) {
     if (element.kind === 'project') return undefined;
     if (element.kind === 'log') return element.project;
+    if (this.byTime) {
+      const { timeline } = element.log.trace;
+      if (element.kind === 'page' || timeline.length <= PAGE_SIZE) return element.log;
+      const event = element.kind === 'node' ? element.node.event : element.row.event;
+      return this.getChildren(element.log)[Math.floor(timeline.findIndex((row) => row.event === event) / PAGE_SIZE)];
+    }
     if (element.kind === 'node' && !element.log.parents.has(element)) {
       this.getChildren(element.node.parent ? this.nodeItem(element.log, element.node.parent) : element.log);
     }
@@ -218,11 +234,19 @@ class CallsProvider {
           : `${(start.argv ?? []).join(' ')}\ncwd: ${start.cwd}\nstarted: ${start.started}\n${file}`;
       return item;
     }
+    if (element.kind === 'page') {
+      const item = new vscode.TreeItem(logs.pageLabel(element.row), Collapsed);
+      item.id = `${element.log.file}#${element.id}`;
+      item.description = logs.pageDescription(element.log.trace, element.row);
+      item.iconPath = new vscode.ThemeIcon('list-flat');
+      item.contextValue = 'page';
+      return item;
+    }
     if (element.kind !== 'node') {
       const { row, log } = element;
       const event = row.event;
       const group = element.kind === 'group';
-      const item = new vscode.TreeItem(group ? logs.groupLabel(row) : logs.skipLabel(event), group ? Collapsed : None);
+      const item = new vscode.TreeItem(group ? logs.groupLabel(row) : `${this.stamp(log, event)}${logs.skipLabel(event)}`, group ? Collapsed : None);
       item.id = `${log.file}#${element.id}`;
       item.description = group ? logs.groupDescription(row) : '';
       item.iconPath = new vscode.ThemeIcon(group ? 'layers' : 'ellipsis', processColor(log, event));
@@ -232,7 +256,7 @@ class CallsProvider {
     }
     const { node, log } = element;
     const event = node.event;
-    const item = new vscode.TreeItem(logs.nodeLabel(node, log.root), node.children.length + node.skips.length > 0 ? Collapsed : None);
+    const item = new vscode.TreeItem(`${this.stamp(log, event)}${logs.nodeLabel(node, log.root)}`, !this.byTime && node.children.length + node.skips.length > 0 ? Collapsed : None);
     item.id = `node:${log.file}#${event.id}`;
     item.description = logs.nodeDescription(node) || (log.running && event.type === 'call' && !node.outcome ? 'running…' : '');
     const end = event.type === 'call' ? node.outcome ?? node.end : node.end;
@@ -245,27 +269,43 @@ class CallsProvider {
           );
     // an external call (4.13) is logged where it was made, with no function to go to
     item.contextValue = event.type === 'call' && event.external ? 'external' : event.type === 'call' && event.site ? 'callSite' : event.type;
+    // listed by time, a resume stays where it's clicked: its call may be far from it
     item.command =
-      event.type === 'resume'
+      event.type === 'resume' && !this.byTime
         ? { title: 'Show the call', command: 'jstrace.showCall', arguments: [element] }
         : { title: 'Show where it was called, with its values', command: 'jstrace.showStep', arguments: [element] };
     return item;
   }
 
   /**
-   * Fills in a node's hover only once it's needed, since values can be big.
+   * What goes before a record's label: when it happened, when that's shown.
+   * @param {LogItem} log
+   * @param {Record<string, any>} event
+   * @returns {string}
+   */
+  stamp(log, event) {
+    return this.byTime && this.showTimes ? `${logs.clockTime(log.trace, event)}  ` : '';
+  }
+
+  /**
+   * Fills in a node's hover only once it's needed, since values can be big. Listed by time,
+   * it also says what the node ran in, which the list no longer shows.
    * @param {vscode.TreeItem} item
    * @param {Item} element
    * @returns {vscode.TreeItem}
    */
   resolveTreeItem(item, element) {
-    if (element.kind === 'node') item.tooltip = new vscode.MarkdownString(logs.nodeTooltip(element.node, element.log.root));
+    if (element.kind === 'node') {
+      const { node, log } = element;
+      const within = this.byTime && node.parent ? `In ${logs.stackOf(node.parent, log.root)}\n\n` : '';
+      item.tooltip = new vscode.MarkdownString(`${within}${logs.nodeTooltip(node, log.root)}`);
+    }
     if (element.kind === 'group' || element.kind === 'skip') item.tooltip = new vscode.MarkdownString(logs.rowTooltip(element.row, element.log.root));
     return item;
   }
 
   /**
-   * Forgets the items made for the logs' trees, so they're grouped again.
+   * Forgets the items made for the logs' trees, so they're listed again.
    * @returns {void}
    */
   regroup() {
@@ -361,12 +401,12 @@ class CallsProvider {
   /**
    * @param {LogItem} log
    * @param {string} id where it is and what it groups, unique in the log
-   * @param {import('./logs').Row} row a group or a skip
+   * @param {import('./logs').Row} row a group, a skip or a page
    * @returns {RowItem}
    */
   rowItem(log, id, row) {
     let item = log.rows.get(id);
-    if (!item) log.rows.set(id, (item = { kind: row.kind === 'group' ? 'group' : 'skip', id, log, row }));
+    if (!item) log.rows.set(id, (item = { kind: row.kind === 'node' ? 'skip' : row.kind, id, log, row }));
     item.row = row;
     return item;
   }
@@ -584,6 +624,22 @@ function activate(context) {
   provider.onDidChangeTreeData(() => {
     if (search.active) search.refresh();
   });
+
+  /**
+   * Sets how the Calls view lists logs, keeping it for this workspace, and tells the menus.
+   * @param {'byTime' | 'showTimes'} option
+   * @param {boolean} value
+   * @returns {void}
+   */
+  function setOption(option, value) {
+    provider[option] = value;
+    void context.workspaceState.update(`jstrace.${option}`, value);
+    void vscode.commands.executeCommand('setContext', `jstrace.${option}`, value);
+    provider.regroup();
+  }
+  setOption('byTime', context.workspaceState.get('jstrace.byTime', false));
+  setOption('showTimes', context.workspaceState.get('jstrace.showTimes', true));
+
   const ticker = setInterval(() => provider.tick(), 1000);
   ticker.unref(); // not to keep a process alive (tests)
   const watcher = vscode.workspace.createFileSystemWatcher('**/.jstrace/logs/*.jsonl', false, true, false);
@@ -696,7 +752,7 @@ function activate(context) {
       const position = positionIn(document, line, column, name);
       const editor = await vscode.window.showTextDocument(document, { selection: new vscode.Range(position, position), preserveFocus: true });
       const tree = provider.getTreeItem(item);
-      let text = `${tree.label}${tree.description ? `  ${tree.description}` : ''}`;
+      let text = `${logs.nodeLabel(item.node, item.log.root)}${tree.description ? `  ${tree.description}` : ''}`;
       if (text.length > MAX_STEP_TEXT) text = `${text.slice(0, MAX_STEP_TEXT - 1)}…`;
       const hint = stepHint(document);
       const range = new vscode.Range(new vscode.Position(position.line, 0), new vscode.Position(position.line, document.lineAt(position.line).text.length));
@@ -759,6 +815,11 @@ function activate(context) {
     }),
 
     vscode.commands.registerCommand('jstrace.refresh', () => provider.refresh()),
+
+    vscode.commands.registerCommand('jstrace.showByTime', () => setOption('byTime', true)),
+    vscode.commands.registerCommand('jstrace.showAsTree', () => setOption('byTime', false)),
+    vscode.commands.registerCommand('jstrace.showTimes', () => setOption('showTimes', true)),
+    vscode.commands.registerCommand('jstrace.hideTimes', () => setOption('showTimes', false)),
 
     vscode.commands.registerCommand('jstrace.clearLogs', async () => {
       const folders = projects().filter((folder) => logs.listLogs(logFolder(folder)).length > 0);
