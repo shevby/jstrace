@@ -297,7 +297,7 @@ class CallsProvider {
   resolveTreeItem(item, element) {
     if (element.kind === 'node') {
       const { node, log } = element;
-      const within = this.byTime && node.parent ? `In ${logs.stackOf(node.parent, log.root)}\n\n` : '';
+      const within = this.byTime && node.parent ? `In ${logs.escapeMarkdown(logs.stackOf(node.parent, log.root))}\n\n` : '';
       item.tooltip = new vscode.MarkdownString(`${within}${logs.nodeTooltip(node, log.root)}`);
     }
     if (element.kind === 'group' || element.kind === 'skip') item.tooltip = new vscode.MarkdownString(logs.rowTooltip(element.row, element.log.root));
@@ -556,10 +556,22 @@ class SearchProvider {
   resolveTreeItem(item, element) {
     if (element.kind !== 'node') return item;
     const { node, log } = element;
-    const within = node.parent ? `In ${logs.stackOf(node.parent, log.root)}\n\n` : '';
+    const within = node.parent ? `In ${logs.escapeMarkdown(logs.stackOf(node.parent, log.root))}\n\n` : '';
     item.tooltip = new vscode.MarkdownString(`${within}${logs.nodeTooltip(node, log.root)}\n\nDouble-click to show it in the Calls view`);
     return item;
   }
+}
+
+/**
+ * Whether a path from a log is refused, saying so: a network path outside the workspace
+ * (see `mayOpen` in `logs.js`).
+ * @param {string} file
+ * @returns {boolean}
+ */
+function refused(file) {
+  if (logs.mayOpen(file, (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath))) return false;
+  vscode.window.showErrorMessage(`jstrace: not opening ${file}: a log named a network path outside the workspace.`);
+  return true;
 }
 
 /**
@@ -747,6 +759,7 @@ function activate(context) {
       : [event.file, event.line ?? 1, event.column ?? 0, undefined];
     clearStep();
     stepped.item = item;
+    if (refused(file)) return;
     try {
       const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
       const position = positionIn(document, line, column, name);
@@ -1008,6 +1021,7 @@ function activate(context) {
        * @param {string} [name] what to look for on the line, without a column
        */
       async (file, line, column, name) => {
+        if (refused(file)) return;
         try {
           const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
           const position = positionIn(document, line, column, name);

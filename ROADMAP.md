@@ -29,11 +29,10 @@ All done; see [DONE.md](DONE.md).
 
 ## 4. Later / maybe
 
-4.1, 4.2, 4.3, 4.5, 4.6, 4.7, 4.10, 4.12, 4.13, 4.14, 4.15, 4.16, 4.17, 4.19, 4.21, 4.22, 4.23 and 4.24 are done; see [DONE.md](DONE.md).
+4.1, 4.2, 4.3, 4.5, 4.6, 4.7, 4.10, 4.12, 4.13, 4.14, 4.15, 4.16, 4.17, 4.19, 4.20, 4.21, 4.22, 4.23 and 4.24 are done; see [DONE.md](DONE.md).
 
 - [ ] 4.4 Node's own objects in values (a `Timeout` returned by `setTimeout`, its `TimersList`, sockets) shown as just `[Timeout]`, instead of their internal fields filling a whole line. *(proposed)*
 - [ ] 4.8 Call durations: "took 12 ms" in a call's description (from its `call` and `return` times; async waits included), and a command listing a log's slowest calls. *(proposed)*
 - [ ] 4.9 From code to calls: a CodeLens above each traced function in the editor ("called 12 times, last ← 120") from the selected log; clicking it reveals those calls in the tree. *(proposed)*
 - [ ] 4.11 Copy a value: context-menu commands copying a call's arguments or return value as JSON. *(proposed)*
 - [ ] 4.18 Find Calls at This Line inside a function's body: when nothing was called from the line, list the calls of the function around the cursor (found with VSCode's document symbols, since the logs have no function ends). *(proposed)*
-- [ ] 4.20 Logs from others are untrusted (since 4.19 they're meant to be passed around): escape Markdown in the hovers' names, paths and ids (`nodeTooltip`, `rowTooltip`; values are fenced already), so a crafted log can't load a remote image on hover; open a network (UNC) path from a log only inside a workspace folder, so a click can't make Windows authenticate to another host. *(proposed)*

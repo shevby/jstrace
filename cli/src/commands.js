@@ -324,7 +324,12 @@ function reinject(project, targets, cwd, output) {
     return 1;
   }
   const found = recorded.filter((target) => {
-    if (fs.existsSync(path.join(project.dir, target))) return true;
+    const absolute = path.resolve(project.dir, target);
+    if (relative(project, absolute) === null) {
+      output.err(`${target}: not inside the project, so it's skipped`);
+      return false;
+    }
+    if (fs.existsSync(absolute)) return true;
     output.err(`${target}: no longer there, so it's skipped`);
     return false;
   });

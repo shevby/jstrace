@@ -95,6 +95,17 @@ test('targets add up, and restore can take some of them', (t) => {
   assert.ok(!fs.existsSync(path.join(dir, '.jstrace/backup/node_modules')));
 });
 
+test('reinject skips a recorded path outside the project, and goes on with the others', (t) => {
+  const dir = copyFixture(t, 'app');
+  run(dir, 'instrument', 'lib');
+  const targets = ['lib', '../elsewhere', path.resolve(dir, '..'), '.jstrace/backup'];
+  fs.writeFileSync(path.join(dir, '.jstrace', 'injected.json'), JSON.stringify({ targets, done: false }));
+  const { code, out, err } = run(dir, 'reinject');
+  assert.equal(code, 0);
+  assert.equal(out[0], 'Reinjecting lib');
+  assert.deepEqual(err.filter((line) => line.includes('not inside')), targets.slice(1).map((target) => `${target}: not inside the project, so it's skipped`));
+});
+
 test('reinject instruments again the targets since all was last restored, new files in them too', (t) => {
   const dir = copyFixture(t, 'app');
   assert.deepEqual(run(dir, 'reinject'), { code: 1, out: [], err: ['Nothing to reinject: nothing was instrumented in this project yet'] });
