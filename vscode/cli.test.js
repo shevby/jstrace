@@ -18,6 +18,26 @@ test('cliScript finds the CLI packed in the extension, or in this repo beside it
   assert.equal(cliScript(path.join(packed, 'node_modules', 'greeter')), undefined);
 });
 
+test('runCli takes all the CLI says, however much', async (t) => {
+  const dir = copyFixture(t, 'app');
+  const size = 2 * 1024 * 1024; // past the 1 MiB at which Node would kill it
+  fs.mkdirSync(path.join(dir, 'cli', 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'cli', 'bin', 'jstrace.js'), `process.stderr.write('x'.repeat(${size}));`);
+  const result = await runCli(dir, ['instrument', '.'], dir);
+  assert.equal(result.code, 0);
+  assert.equal(result.stderr.length, size);
+});
+
+test('runCli takes the folder it runs in as the project, whatever is above it', async (t) => {
+  const dir = copyFixture(t, 'app');
+  fs.writeFileSync(path.join(dir, 'jstrace.config.json'), '{}');
+  const folder = path.join(dir, 'lib');
+  const result = await runCli(__dirname, ['instrument', 'math.js'], folder);
+  assert.equal(result.code, 0, result.stderr);
+  assert.ok(fs.existsSync(path.join(folder, '.jstrace', 'backup', 'manifest.json')));
+  assert.ok(!fs.existsSync(path.join(dir, '.jstrace')));
+});
+
 test('runCli instruments and restores a project, with what the CLI said', async (t) => {
   const dir = copyFixture(t, 'app');
   const instrumented = await runCli(__dirname, ['instrument', 'lib', 'index.js'], dir);

@@ -73,7 +73,7 @@ jstrace restore             # puts every original file back
 | `jstrace mock [file]` | Creates a mock of what tracing uses from a template, and names it in the config. See [Mocking the runtime](#mocking-the-runtime). |
 | `jstrace help` | Shows the usage. |
 
-The **project** is the folder holding `jstrace.config.json` and `.jstrace/`. That's the current folder, or the nearest one above it that already has either. Line numbers in an instrumented file stay the same as in the original, so stack traces still point to the right lines.
+The **project** is the folder holding `jstrace.config.json` and `.jstrace/`. That's the current folder, or the nearest one above it that already has either. To name it instead, put `--project <folder>` before the command. In VSCode it's always the workspace folder. Line numbers in an instrumented file stay the same as in the original, so stack traces still point to the right lines.
 
 ## The Calls view
 
@@ -294,10 +294,11 @@ Files in the project are logged relative to it (`lib/math.js`), so you can copy 
 
 ### What the logs hold
 
-The logs hold whatever passed through the traced functions: arguments, return values, errors, and the command line. That includes passwords, tokens, cookies or personal data, as they were. So jstrace keeps them to you:
+The logs hold whatever passed through the traced functions: arguments, return values, errors, and the command line. That includes passwords, tokens, cookies or personal data, as they were. So jstrace tries to keep them to you:
 
 - `instrument` puts a `.gitignore` in `.jstrace/` that ignores all of it, so the logs and backups aren't committed. A `.gitignore` you put there yourself is left alone.
-- The log folder and files are readable by you only (modes `0700` and `0600`). On Windows, they take the permissions of the folder they're in.
+- On Linux and macOS, the log folder and files are readable by you only (modes `0700` and `0600`).
+- On Windows those modes do nothing: the logs take the permissions of the folder they're in. If other accounts on the computer can read that folder, they can read your logs, and if they can write to it, they can change them. Folders directly on a data drive (like `D:\projects`) often let every account do both, so on a shared computer keep projects in your user folder.
 - jstrace never sends anything over the network.
 
 Mind where else they can go: a project in a synced folder (OneDrive, Dropbox) uploads them, and `JSTRACE_OUT` can put them anywhere.

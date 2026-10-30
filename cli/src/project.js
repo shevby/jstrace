@@ -19,6 +19,7 @@ const JSTRACE_DIR = '.jstrace';
  * @property {string} logs `.jstrace/logs`, where the runtime writes
  * @property {string} backup `.jstrace/backup`, the originals of instrumented files
  * @property {string} manifest `.jstrace/backup/manifest.json`, the list of instrumented files
+ * @property {string} journal `.jstrace/backup/manifest.log`, what `instrument` added to the list so far
  * @property {string} injected `.jstrace/injected.json`, the targets instrumented since nothing was, for `reinject`
  */
 
@@ -36,6 +37,7 @@ function projectAt(dir) {
     logs: path.join(dir, JSTRACE_DIR, 'logs'),
     backup,
     manifest: path.join(backup, 'manifest.json'),
+    journal: path.join(backup, 'manifest.log'),
     injected: path.join(dir, JSTRACE_DIR, 'injected.json'),
   };
 }

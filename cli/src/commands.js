@@ -31,13 +31,25 @@ const MOCK_TEMPLATE = path.join(__dirname, '..', 'runtime', 'mock-template.js');
  */
 
 /**
- * Reads the manifest, or an empty one when there's none.
+ * Reads the manifest, or an empty one when there's none, with what a run of `instrument`
+ * killed before it could write the manifest had added to it (the journal), so the files it
+ * rewrote can still be restored.
  * @param {Project} project
  * @returns {Manifest}
  */
 function readManifest(project) {
-  if (!fs.existsSync(project.manifest)) return { files: {} };
-  return JSON.parse(fs.readFileSync(project.manifest, 'utf8'));
+  /** @type {Manifest} */
+  const manifest = fs.existsSync(project.manifest) ? JSON.parse(fs.readFileSync(project.manifest, 'utf8')) : { files: {} };
+  if (!fs.existsSync(project.journal)) return manifest;
+  for (const line of fs.readFileSync(project.journal, 'utf8').split('\n')) {
+    try {
+      const [rel, written] = JSON.parse(line);
+      manifest.files[rel] = { hash: written };
+    } catch {
+      // the end of the file, or a line the kill cut short
+    }
+  }
+  return manifest;
 }
 
 /**
@@ -53,6 +65,7 @@ function writeManifest(project, manifest) {
   }
   fs.mkdirSync(project.backup, { recursive: true });
   fs.writeFileSync(project.manifest, JSON.stringify(manifest, null, 2) + '\n');
+  fs.rmSync(project.journal, { force: true });
 }
 
 /**
@@ -231,6 +244,7 @@ function instrument(project, targets, cwd, output) {
       }
       fs.writeFileSync(file, code);
       manifest.files[rel] = { hash: hash(code) };
+      fs.appendFileSync(project.journal, JSON.stringify([rel, manifest.files[rel].hash]) + '\n'); // the manifest is only written at the end
       done++;
     }
   } finally {

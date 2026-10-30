@@ -5,8 +5,9 @@
  * as acorn is the only dependency.
  */
 
+const path = require('node:path');
 const { init, instrument, restore, reinject, createMock } = require('./commands');
-const { findProject } = require('./project');
+const { findProject, projectAt } = require('./project');
 
 const USAGE = `Usage:
   jstrace init                   create jstrace.config.json with the defaults, and .jstrace/,
@@ -20,7 +21,8 @@ const USAGE = `Usage:
   jstrace help                   show this help
 
 The project (where jstrace.config.json and .jstrace/ live) is the current folder, or the
-nearest one above it that has either.`;
+nearest one above it that has either. To name it instead, put --project <folder> before
+the command.`;
 
 /**
  * Where the CLI writes: stdout for results, stderr for problems. Tests pass their own.
@@ -43,7 +45,8 @@ const consoleOutput = {
  * @returns {number} the exit code: 0 on success, 1 when the command failed, 2 for a wrong command line
  */
 function main(argv, output = consoleOutput, cwd = process.cwd()) {
-  const [command, ...args] = argv;
+  const named = argv[0] === '--project' ? argv[1] : undefined;
+  const [command, ...args] = argv[0] === '--project' ? argv.slice(2) : argv;
   if (command === undefined || command === 'help' || command === '--help' || command === '-h') {
     output.out(USAGE);
     return command === undefined ? 2 : 0;
@@ -66,7 +69,7 @@ function main(argv, output = consoleOutput, cwd = process.cwd()) {
     output.err(`reinject takes no arguments: it instruments the paths instrumented before\n\n${USAGE}`);
     return 2;
   }
-  return commands[command](findProject(cwd), args, cwd, output);
+  return commands[command](named === undefined ? findProject(cwd) : projectAt(path.resolve(cwd, named)), args, cwd, output);
 }
 
 module.exports = { main, USAGE };
