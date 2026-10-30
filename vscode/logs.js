@@ -36,6 +36,7 @@ const NOT_TRACED = "Not traced (a built-in, or in a file that isn't instrumented
  * @property {TraceNode[]} roots the nodes with no parent, in order
  * @property {Record<string, any>[]} skips the `skip` events with no parent
  * @property {Map<number, TraceNode>} nodes every node by id
+ * @property {Row[]} timeline its nodes and `skip` events in the order they happened (a log's own order)
  * @property {Record<string, any> | undefined} end its `end` event: the process ended
  * @property {string} root the project folder here, which the log's relative paths are resolved against
  */
@@ -43,13 +44,16 @@ const NOT_TRACED = "Not traced (a built-in, or in a file that isn't instrumented
 /**
  * A row of the tree under a node (or at the top of a log): a node, a group of the calls of
  * one function (or the resumes of its calls) there, or calls of a function that weren't logged.
+ * Listed by time (4.24), a row is a node, a skip, or a page of them.
  * @typedef {object} Row
- * @property {'node' | 'group' | 'skip'} kind
- * @property {Record<string, any>} event the node's; a group's first node's; a skip's `skip` event
- * @property {string} key what a group's nodes share, and a skip's function
+ * @property {'node' | 'group' | 'skip' | 'page'} kind
+ * @property {Record<string, any>} event the node's; a group's or a page's first; a skip's `skip` event
+ * @property {string} key what a group's nodes share, a skip's function, and where a page starts
  * @property {TraceNode} [node] a node's
  * @property {TraceNode[]} [nodes] a group's, in order
  * @property {Record<string, any>} [skip] a group's `skip` event, when calls of it weren't logged
+ * @property {number} [from] a page's first row, counting from 0
+ * @property {Row[]} [rows] a page's, in order
  */
 
 /** What an absolute path starts with, on Windows or elsewhere, whichever machine wrote the log. */
@@ -65,7 +69,7 @@ const ABSOLUTE = /^(?:[A-Za-z]:[\\/]|[\\/])/;
  */
 function parseLog(text, root = '') {
   /** @type {Trace} */
-  const trace = { start: undefined, roots: [], skips: [], nodes: new Map(), end: undefined, root };
+  const trace = { start: undefined, roots: [], skips: [], nodes: new Map(), timeline: [], end: undefined, root };
   appendLog(trace, text);
   return trace;
 }
@@ -107,6 +111,7 @@ function appendLog(trace, text) {
       /** @type {TraceNode} */
       const node = { event, parent, children: [], resumes: [], skips: [] };
       trace.nodes.set(event.id, node);
+      trace.timeline.push({ kind: 'node', event, key: '', node });
       (parent ? parent.children : trace.roots).push(node);
       if (event.type === 'resume') {
         node.call = trace.nodes.get(event.call);
@@ -120,6 +125,7 @@ function appendLog(trace, text) {
     } else if (event.type === 'skip') {
       const node = event.parent === null ? undefined : trace.nodes.get(event.parent);
       (node ? node.skips : trace.skips).push(event);
+      trace.timeline.push({ kind: 'skip', event, key: `${event.parent}:${groupKey(event)}` });
     }
   }
 }
@@ -231,6 +237,36 @@ function rows(nodes, skips, min) {
   }
   for (const [key, event] of skipped) result.push({ kind: 'skip', event, key });
   return result;
+}
+
+/**
+ * A log's rows by time (4.24): all its nodes and skips at one level, in the order they
+ * happened, or pages of them when they're too many for one list.
+ * @param {Trace} trace
+ * @param {number} size how many a list holds
+ * @returns {Row[]}
+ */
+function timeRows(trace, size) {
+  const all = trace.timeline;
+  if (all.length <= size) return all;
+  /** @type {Row[]} */
+  const pages = [];
+  for (let from = 0; from < all.length; from += size) {
+    pages.push({ kind: 'page', event: all[from].event, key: String(from), from, rows: all.slice(from, from + size) });
+  }
+  return pages;
+}
+
+/**
+ * When an event happened, by the clock where this log is read: `10:15:03.123`.
+ * @param {Trace} trace
+ * @param {Record<string, any>} event
+ * @returns {string} its ms since the start, for a log with no start time
+ */
+function clockTime(trace, event) {
+  const at = new Date(Date.parse(trace.start?.started) + event.time);
+  if (isNaN(at.getTime())) return `${event.time} ms`;
+  return `${at.toTimeString().slice(0, 8)}.${String(at.getMilliseconds()).padStart(3, '0')}`;
 }
 
 /**
@@ -499,6 +535,27 @@ function groupDescription(row) {
  */
 function skipLabel(event) {
   return `${processPrefix(event)}… ${event.name}()${event.resumes ? ' resumed' : ''} ×${event.count} not logged`;
+}
+
+/**
+ * A page's label: which rows it holds, `2001–4000`.
+ * @param {Row} row a page
+ * @returns {string}
+ */
+function pageLabel(row) {
+  const from = row.from ?? 0;
+  return `${from + 1}–${from + (row.rows?.length ?? 0)}`;
+}
+
+/**
+ * A page's description: when its first and last rows happened.
+ * @param {Trace} trace
+ * @param {Row} row a page
+ * @returns {string}
+ */
+function pageDescription(trace, row) {
+  const last = row.rows?.at(-1);
+  return last ? `${clockTime(trace, row.event)} – ${clockTime(trace, last.event)}` : '';
 }
 
 /**
@@ -961,9 +1018,13 @@ module.exports = {
   nodeDetails,
   groupDetails,
   rows,
+  timeRows,
+  clockTime,
   groupLabel,
   groupDescription,
   skipLabel,
+  pageLabel,
+  pageDescription,
   rowTooltip,
   readLog,
   listLogs,

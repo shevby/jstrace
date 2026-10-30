@@ -131,6 +131,28 @@ test('rows group the calls of a function, with those not logged', () => {
   assert.match(logs.rowTooltip({ kind: 'skip', event: resumes, key: '' }, ROOT), /resumed 4 more times here, not logged/);
 });
 
+test('timeRows lists nodes and skips in the order they happened, in pages past the size', () => {
+  const trace = logs.parseLog([
+    { type: 'start', pid: 1, started: '2026-01-01T10:15:00.000Z', time: 0 },
+    { type: 'call', id: 1, parent: null, depth: 0, name: 'a', file: 'x.js', line: 1, column: 0, args: {}, time: 1 },
+    { type: 'call', id: 2, parent: 1, depth: 1, name: 'b', file: 'x.js', line: 2, column: 0, args: {}, time: 2 },
+    { type: 'skip', parent: 1, name: 'b', file: 'x.js', line: 2, column: 0, count: 2, time: 3 },
+    { type: 'return', call: 1, parent: 1, time: 4 },
+    { type: 'call', id: 3, parent: null, depth: 0, name: 'c', file: 'x.js', line: 3, column: 0, args: {}, time: 3000 },
+  ].map((event) => JSON.stringify(event)).join('\n'));
+  assert.deepEqual(logs.timeRows(trace, 4).map((row) => [row.kind, row.event.name]), [['node', 'a'], ['node', 'b'], ['skip', 'b'], ['node', 'c']]);
+
+  const pages = logs.timeRows(trace, 3);
+  assert.deepEqual(pages.map((row) => [row.kind, logs.pageLabel(row), row.rows?.length]), [['page', '1–3', 3], ['page', '4–4', 1]]);
+
+  const local = new Date(2026, 0, 1, 8, 5, 9, 7);
+  assert.equal(logs.clockTime(/** @type {any} */ ({ start: { started: local.toISOString() } }), { time: 1000.6 }), '08:05:10.007');
+  assert.equal(logs.clockTime(/** @type {any} */ ({ start: undefined }), { time: 12.5 }), '12.5 ms', 'no start time to count from');
+  const [first, second] = [trace.timeline[0].event, trace.timeline[3].event];
+  assert.equal(logs.pageDescription(trace, pages[0]), `${logs.clockTime(trace, first)} – ${logs.clockTime(trace, trace.timeline[2].event)}`);
+  assert.equal(logs.pageDescription(trace, pages[1]), `${logs.clockTime(trace, second)} – ${logs.clockTime(trace, second)}`);
+});
+
 test('details show where and when a call ran, its arguments and how it ended', () => {
   const trace = logs.parseLog(LOG);
   const [load, resume, ids] = trace.roots;

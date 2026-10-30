@@ -41,6 +41,8 @@ function fakeVscode(dir) {
   const last = {};
   /** @type {Record<string, any>} the content providers, by scheme */
   const contents = {};
+  /** @type {Record<string, any>} what the menus can test, by context key */
+  const keys = {};
   const folder = { name: path.basename(dir), index: 0, uri: { fsPath: dir, scheme: 'file' } };
   /** @param {string} kind */
   const message = (kind) => async (/** @type {string} */ text, /** @type {any[]} */ ...rest) => {
@@ -173,24 +175,29 @@ function fakeVscode(dir) {
         commands[name] = handler;
         return { dispose() {} };
       },
-      executeCommand: (/** @type {string} */ name, /** @type {any[]} */ ...args) => commands[name]?.(...args), // and the views' own
+      executeCommand: (/** @type {string} */ name, /** @type {any[]} */ ...args) => {
+        if (name === 'setContext') keys[args[0]] = args[1];
+        return commands[name]?.(...args); // and the views' own
+      },
     },
   };
-  return { vscode, commands, messages, revealed, opened, inputs, picks, views, decorations, status, settings, lenses, last, provider: () => views['jstrace.calls'].provider };
+  return { vscode, commands, messages, revealed, opened, inputs, picks, views, decorations, status, settings, lenses, last, keys, provider: () => views['jstrace.calls'].provider };
 }
 
 /**
  * Loads the extension with a fake `vscode` and activates it.
  * @param {string} dir the workspace folder
+ * @param {Map<string, any>} [state] what it kept for this workspace
  */
-function activate(dir) {
+function activate(dir, state = new Map()) {
   const fake = fakeVscode(dir);
+  const workspaceState = { get: (/** @type {string} */ key, /** @type {any} */ value) => (state.has(key) ? state.get(key) : value), update: async (/** @type {string} */ key, /** @type {any} */ value) => void state.set(key, value) };
   const mod = /** @type {any} */ (Module);
   const load = mod._load;
   mod._load = (/** @type {string} */ request, /** @type {any[]} */ ...rest) => (request === 'vscode' ? fake.vscode : load(request, ...rest));
   try {
     delete require.cache[require.resolve('./extension')];
-    require('./extension').activate(/** @type {any} */ ({ subscriptions: [], extensionPath: __dirname }));
+    require('./extension').activate(/** @type {any} */ ({ subscriptions: [], extensionPath: __dirname, workspaceState }));
   } finally {
     mod._load = load;
   }
@@ -405,6 +412,89 @@ test('the tree follows a log as it is written, keeping its items', (t) => {
   assert.deepEqual(provider.getChildren(main).map((/** @type {any} */ child) => provider.getTreeItem(child).label), ['greet()']);
   provider.tick();
   assert.equal(provider.changed.fired.length, 1, 'nothing new, nothing refreshed');
+});
+
+test('a log can be listed by time, at one level, with its timestamps shown or hidden', async (t) => {
+  const dir = copyFixture(t, 'app');
+  const folder = path.join(dir, '.jstrace', 'logs');
+  fs.mkdirSync(folder, { recursive: true });
+  const state = new Map();
+  const fake = activate(dir, state);
+  const provider = fake.provider();
+  assert.deepEqual(fake.keys, { 'jstrace.byTime': false, 'jstrace.showTimes': true });
+  const index = path.join(dir, 'index.js');
+  const lines = [
+    { type: 'start', pid: 1, argv: ['node', index], cwd: dir, started: '2026-01-01T00:00:00.000Z', time: 0 },
+    { type: 'call', id: 1, parent: null, depth: 0, name: 'main', file: index, line: 23, column: 0, args: {}, time: 1 },
+    { type: 'call', id: 2, parent: 1, depth: 1, name: 'send', file: index, line: 6, column: 0, args: {}, site: { file: index, line: 23 }, time: 2.5 },
+    { type: 'skip', parent: 1, name: 'send', file: index, line: 6, column: 0, count: 3, time: 3 },
+    { type: 'return', call: 1, parent: 1, time: 4 },
+    { type: 'resume', id: 3, call: 1, parent: null, depth: 0, name: 'main', file: index, line: 24, column: 2, time: 90 },
+  ];
+  fs.writeFileSync(path.join(folder, '2026-01-01T00-00-00.000Z-1.jsonl'), lines.map((line) => `${JSON.stringify(line)}\n`).join(''));
+  const [log] = provider.getChildren();
+  const [main] = provider.getChildren(log);
+  assert.equal(provider.getTreeItem(main).collapsibleState, 1, 'a tree to begin with');
+
+  await fake.commands['jstrace.showByTime']();
+  assert.deepEqual(fake.keys, { 'jstrace.byTime': true, 'jstrace.showTimes': true });
+  const rows = provider.getChildren(log);
+  const clock = (/** @type {number} */ ms) => logs.clockTime(logs.parseLog(JSON.stringify(lines[0])), { time: ms });
+  assert.deepEqual(rows.map((/** @type {any} */ row) => provider.getTreeItem(row).label), [
+    `${clock(1)}  main()`,
+    `${clock(2.5)}  send()`,
+    `${clock(3)}  … send() ×3 not logged`,
+    `${clock(90)}  ↻ main() resumed`,
+  ]);
+  assert.deepEqual(rows.map((/** @type {any} */ row) => provider.getTreeItem(row).collapsibleState), [0, 0, 0, 0], 'nothing nested');
+  assert.deepEqual(provider.getChildren(rows[0]), []);
+  assert.equal(rows[0], main, 'the same items, so a reveal finds them');
+  const send = rows[1];
+  assert.equal(provider.getParent(send), log);
+  assert.match(provider.resolveTreeItem(provider.getTreeItem(send), send).tooltip.value, /^In main\(\) #1\n/);
+  assert.equal(provider.getTreeItem(rows[3]).command.command, 'jstrace.showStep', 'a resume stays where it was clicked');
+  await fake.commands['jstrace.showStep'](send);
+  assert.equal(fake.lenses.provider.provideCodeLenses(fake.last.document)[0].command.title, 'send()', 'no timestamp in the step hint');
+
+  await fake.commands['jstrace.hideTimes']();
+  assert.equal(fake.keys['jstrace.showTimes'], false);
+  assert.equal(provider.getTreeItem(send).label, 'send()');
+  assert.equal(activate(dir, state).provider().byTime, true, 'kept for the workspace');
+  await fake.commands['jstrace.showTimes']();
+  assert.equal(provider.getTreeItem(send).label, `${clock(2.5)}  send()`);
+
+  await fake.commands['jstrace.showAsTree']();
+  assert.equal(provider.getTreeItem(send).label, 'send()', 'timestamps belong to the list by time');
+  assert.deepEqual(provider.getChildren(log).slice(0, 1), [main]);
+  assert.equal(provider.getParent(send).kind, 'group', 'nested and grouped again');
+  assert.equal(provider.getTreeItem(main).collapsibleState, 1);
+});
+
+test('a log too long for one list is split into pages, and a call in one can be revealed', async (t) => {
+  const dir = copyFixture(t, 'app');
+  const folder = path.join(dir, '.jstrace', 'logs');
+  fs.mkdirSync(folder, { recursive: true });
+  const fake = activate(dir);
+  const provider = fake.provider();
+  const index = path.join(dir, 'index.js');
+  const started = '2026-01-01T00:00:00.000Z';
+  const count = 2001;
+  const lines = [{ type: 'start', pid: 1, argv: ['node', index], cwd: dir, started, time: 0 }];
+  for (let id = 1; id <= count; id++) lines.push(/** @type {any} */ ({ type: 'call', id, parent: null, depth: 0, name: `f${id}`, file: index, line: id, column: 0, args: {}, time: id }));
+  fs.writeFileSync(path.join(folder, '2026-01-01T00-00-00.000Z-1.jsonl'), lines.map((line) => `${JSON.stringify(line)}\n`).join(''));
+  await fake.commands['jstrace.showByTime']();
+
+  const [log] = provider.getChildren();
+  const pages = provider.getChildren(log);
+  const clock = (/** @type {number} */ ms) => logs.clockTime(logs.parseLog(JSON.stringify(lines[0])), { time: ms });
+  assert.deepEqual(pages.map((/** @type {any} */ page) => provider.getTreeItem(page).label), ['1–2000', '2001–2001']);
+  assert.equal(provider.getTreeItem(pages[1]).description, `${clock(2001)} – ${clock(2001)}`);
+  assert.equal(provider.getChildren(pages[0]).length, 2000);
+  assert.equal(provider.getParent(pages[1]), log);
+  const [last] = provider.getChildren(pages[1]);
+  assert.equal(last.node.event.name, 'f2001');
+  assert.equal(provider.getParent(last), pages[1]);
+  assert.equal(provider.getParent(provider.getChildren(pages[0])[1999]), pages[0]);
 });
 
 test('Init creates the config and .jstrace/ in the workspace folder, and opens the config', async (t) => {
